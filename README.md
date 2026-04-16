@@ -35,18 +35,13 @@ Full-screen interactive terminal pet. 18 species, egg hatching animation, keyboa
 
 ### 2. Claude Code Integration
 
-Add the MCP server to `~/.claude/.mcp.json`:
+Add the MCP server using the Claude Code CLI. Use `-s user` so the buddy is available from any directory:
 
-```json
-{
-  "mcpServers": {
-    "buddy": {
-      "command": "cmd",
-      "args": ["/c", "node", "C:/Users/natys/ClaudeBuddy/buddy-mcp-server.js"]
-    }
-  }
-}
+```bash
+claude mcp add -s user buddy -- node /path/to/ClaudeBuddy/buddy-mcp-server.js
 ```
+
+> **Note:** Using `~/.claude/.mcp.json` directly will **not** register user-level servers. The `-s user` flag writes to `~/.claude.json`, which is the correct location for servers that should work globally. Use `-s project` instead if you only want the buddy in a specific project.
 
 Add the status line and XP hook to `~/.claude/settings.json`:
 
@@ -54,7 +49,7 @@ Add the status line and XP hook to `~/.claude/settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "node C:/Users/natys/ClaudeBuddy/buddy-statusline.js",
+    "command": "node /path/to/ClaudeBuddy/buddy-statusline.js",
     "refreshInterval": 2
   },
   "hooks": {
@@ -63,7 +58,7 @@ Add the status line and XP hook to `~/.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "node C:/Users/natys/ClaudeBuddy/buddy-hook.js",
+            "command": "node /path/to/ClaudeBuddy/buddy-hook.js",
             "async": true
           }
         ]
@@ -72,6 +67,8 @@ Add the status line and XP hook to `~/.claude/settings.json`:
   }
 }
 ```
+
+Replace `/path/to/ClaudeBuddy` with the actual path to your ClaudeBuddy directory.
 
 ### 3. Slash Commands
 
