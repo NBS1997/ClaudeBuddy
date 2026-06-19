@@ -44,8 +44,14 @@ const HATS = ['none','crown','tophat','propeller','halo','wizard','beanie','tiny
 const STAT_NAMES = ['DEBUGGING','PATIENCE','CHAOS','WISDOM','SNARK'];
 const SALT = 'friend-2026-401';
 
-// The server is launched in the project directory; resolve its buddy once.
-const CTX = resolveContext(process.cwd());
+// Resolve this session's buddy once at startup. Claude Code sets
+// CLAUDE_PROJECT_DIR to the session's project root in the spawned server's
+// env; process.cwd() is the launcher's directory (the editor host's, shared
+// across windows) and is explicitly not guaranteed — relying on it surfaced
+// another repo's buddy in every report when multiple sessions were open.
+// Fall back to cwd only when the env var is absent (older Claude Code).
+const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+const CTX = resolveContext(PROJECT_DIR);
 const SAVE_PATH = CTX.savePath;
 
 // ── PRNG & Hashing ─────────────────────────────────────────────

@@ -181,13 +181,18 @@ function sessionCwd() {
   } catch { return null; }
 }
 
+// When we know this session's cwd, render ONLY this repo's buddy — never the
+// shared active pointer, which tracks whichever window was last active and
+// would bleed another repo's buddy into this status line (e.g. a repo that
+// hasn't hatched its own buddy yet). The pointer is a last resort for when
+// Claude Code gives us no cwd at all.
 let SAVE_PATH = null;
 const cwd = sessionCwd();
 if (cwd) {
-  const ctx = resolveContext(cwd);
-  if (safeReadJSON(ctx.savePath)) SAVE_PATH = ctx.savePath; // this repo's own buddy
+  SAVE_PATH = resolveContext(cwd).savePath; // this session's own buddy (repo or global)
+} else {
+  SAVE_PATH = readActiveSavePath();
 }
-if (!SAVE_PATH) SAVE_PATH = readActiveSavePath();
 const save = SAVE_PATH ? safeReadJSON(SAVE_PATH) : null;
 if (!save) { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
 
