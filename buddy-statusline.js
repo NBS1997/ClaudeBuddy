@@ -12,7 +12,7 @@ const path = require('path');
 const os = require('os');
 
 const { levelFromXP, xpProgress, stageFromLevel, evolutionLine, displayStats, evolutionInfo, pathGlyph } = require('./buddy-progression.js');
-const { readActiveSavePath, safeReadJSON } = require('./buddy-paths.js');
+const { readActiveSavePath, safeReadJSON, resolveContext } = require('./buddy-paths.js');
 const SALT = 'friend-2026-401';
 
 // ── Minimal PRNG (same as companion.ts) ─────────────────────
@@ -168,7 +168,26 @@ function renderBuddySprite(bones, save, frame, blink) {
 
 // ── Main ────────────────────────────────────────────────────
 
-const SAVE_PATH = readActiveSavePath();
+// Resolve THIS session's buddy from the cwd Claude Code passes on stdin, so
+// the status line is stable per-repo and never flips to another project's
+// buddy via the shared active pointer. Falls back to the pointer, then global.
+function sessionCwd() {
+  try {
+    if (process.stdin.isTTY) return null;
+    const raw = fs.readFileSync(0, 'utf8');
+    if (!raw || !raw.trim()) return null;
+    const j = JSON.parse(raw);
+    return j.cwd || (j.workspace && (j.workspace.current_dir || j.workspace.project_dir)) || null;
+  } catch { return null; }
+}
+
+let SAVE_PATH = null;
+const cwd = sessionCwd();
+if (cwd) {
+  const ctx = resolveContext(cwd);
+  if (safeReadJSON(ctx.savePath)) SAVE_PATH = ctx.savePath; // this repo's own buddy
+}
+if (!SAVE_PATH) SAVE_PATH = readActiveSavePath();
 const save = SAVE_PATH ? safeReadJSON(SAVE_PATH) : null;
 if (!save) { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
 
