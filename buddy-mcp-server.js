@@ -16,7 +16,16 @@ const readline = require('readline');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements } = require('./buddy-progression.js');
+const {
+  levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements,
+  isRecentLine, recordLine, displayStats, STAT_MEANING,
+  evolutionInfo, trendingPath,
+} = require('./buddy-progression.js');
+const {
+  resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
+  writeActivePointer, updateCollection, COLLECTION_PATH,
+} = require('./buddy-paths.js');
+const { pickVoice } = require('./buddy-voice.js');
 
 // ── Types & Constants ──────────────────────────────────────────
 
@@ -35,7 +44,9 @@ const HATS = ['none','crown','tophat','propeller','halo','wizard','beanie','tiny
 const STAT_NAMES = ['DEBUGGING','PATIENCE','CHAOS','WISDOM','SNARK'];
 const SALT = 'friend-2026-401';
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
+// The server is launched in the project directory; resolve its buddy once.
+const CTX = resolveContext(process.cwd());
+const SAVE_PATH = CTX.savePath;
 
 // ── PRNG & Hashing ─────────────────────────────────────────────
 
@@ -295,140 +306,18 @@ function renderBuddySprite(bones, save, frame, blink) {
   return lines;
 }
 
-// ── Species Messages ───────────────────────────────────────────
-
-const SPECIES_MESSAGES = {
-  duck: {
-    idle:    ['*preens feathers*','Quack!','*waddles around*','Got any bread?','*splashes in water*'],
-    pet:     ['Quaaack! That feels nice!','*happy wiggles*','*nuzzles your hand*'],
-    worried: ['Oh no... *worried quack* ...you\'ll fix it!','*quacks nervously* Bugs happen!','*hides under wing* ...is it bad?'],
-    happy:   ['Quaaack! Tests passed! *happy waddle*','*victory quack* We did it!','*flaps wings excitedly*'],
-  },
-  goose: {
-    idle:    ['HONK!','Peace was never an option.','*menacing waddle*','*steals semicolon*','*eyes you suspiciously*'],
-    pet:     ['...acceptable.','*tolerates it*','Honk... fine.'],
-    worried: ['HONK! *aggressive concern*','*bites the bug*','This displeases the goose.'],
-    happy:   ['HONK HONK! *triumphant waddle*','*steals the victory*','I did this. You\'re welcome.'],
-  },
-  blob: {
-    idle:    ['*jiggles*','*wobbles contentedly*','Bloop!','*shapeshifts slightly*','*absorbs warmth*'],
-    pet:     ['*happy squish*','Blooooop!','*wobbles with joy*'],
-    worried: ['*nervous wobble* Oh bloop...','*jiggles anxiously*','*turns a worried shade*'],
-    happy:   ['*excited jiggle* BLOOP!','*bounces with joy*','*shimmers happily*'],
-  },
-  cat: {
-    idle:    ['*purrs*','*knocks cursor off screen*','Mrow.','*judges your code*','*sits on keyboard*'],
-    pet:     ['*purrs louder*','I\'ll allow it.','*slow blink*'],
-    worried: ['*hisses at the bug* Mrow!','*concerned tail flick*','*judges the error disapprovingly*'],
-    happy:   ['*satisfied purr* As expected.','*slow approving blink*','Mrow. Acceptable work.'],
-  },
-  dragon: {
-    idle:    ['*tiny roar*','My hoard of semicolons!','*breathes warmth*','Rawr!','*curls around codebase*'],
-    pet:     ['*nuzzles*','*warm scales*','*purrs like a furnace*'],
-    worried: ['*protective roar* I\'ll guard the code!','*breathes fire at bugs*','*worried smoke puffs*'],
-    happy:   ['*triumphant roar* VICTORY!','*happy flame burst*','*adds success to hoard*'],
-  },
-  octopus: {
-    idle:    ['*waves tentacle*','*inks nervously*','Blub!','*juggles brackets*','*changes color*'],
-    pet:     ['*hugs with 8 arms*','Blublub!','*happy ink squirt*'],
-    worried: ['*inks everywhere* Oh no!','*wrings tentacles*','*turns worried purple*'],
-    happy:   ['*waves all 8 tentacles* Yay!','*happy color shift*','*triumphant ink dance*'],
-  },
-  owl: {
-    idle:    ['Hoo!','*wise nod*','*rotates head*','Fascinating code...','*contemplates architecture*'],
-    pet:     ['*contented hoot*','*fluffs feathers*','Hoo hoo...'],
-    worried: ['*concerned hoot* Have you considered...','*tilts head at error*','Hoo... that\'s not right.'],
-    happy:   ['*wise approving nod* Well done.','*hoots approvingly*','I knew you could do it. Hoo!'],
-  },
-  penguin: {
-    idle:    ['*slides on belly*','Noot noot!','*waddles*','Brr!','*taps feet*'],
-    pet:     ['*happy feet*','Noot!!','*slides closer*'],
-    worried: ['*concerned noot* Oh no...','*nervous waddle*','*slips on ice worriedly*'],
-    happy:   ['*happy feet dance* NOOT!','*belly slides in celebration*','*victorious waddle*'],
-  },
-  turtle: {
-    idle:    ['*slow blink*','...still here.','*retreats into shell*','Steady wins.','*plods along*'],
-    pet:     ['*peeks out*','*warm shell*','...nice.'],
-    worried: ['*retreats into shell* ...it\'ll be okay...','*slow concerned blink*','...patience.'],
-    happy:   ['*slowly emerges with a smile*','...we did it. *nods*','Slow and steady won.'],
-  },
-  snail: {
-    idle:    ['*leaves trail*','...almost...there...','*slow wave*','~~~~~','*inches forward*'],
-    pet:     ['*happy antenna wiggle*','Slow and loved!','*leaves sparkly trail*'],
-    worried: ['*retreats into shell slowly*','...oh...no...','*worried antenna droop*'],
-    happy:   ['*happy slime trail* ...yay...','*slowly celebrates*','...we...did...it!'],
-  },
-  ghost: {
-    idle:    ['Boo~','*phases through code*','*spooky float*','Ethereal...','*flickers*'],
-    pet:     ['*blushes through*','Ghooost hug!','*warm ectoplasm*'],
-    worried: ['*phases nervously* Boo...','*spooky concern*','*haunts the bug worriedly*'],
-    happy:   ['*happy haunting* Booo~!','*excited flickering*','*phases through screen joyfully*'],
-  },
-  axolotl: {
-    idle:    ['*gill wiggle*','*regenerates typo*','Blep!','*smiles permanently*','*bubbles*'],
-    pet:     ['*wiggles gills*','Blep blep!','*happy regeneration*'],
-    worried: ['*gills droop* Blep...','*worried smile* ...still smiling tho','*anxious gill flutter*'],
-    happy:   ['*excited gill wiggle* BLEP!','*regenerates confidence*','*happy axolotl dance*'],
-  },
-  capybara: {
-    idle:    ['*vibes*','*exists peacefully*','...','*chill*','*radiates calm*'],
-    pet:     ['*maximum chill*','*closes eyes*','...nice.'],
-    worried: ['*slightly less chill* ...it\'s fine.','*calm concern*','...you got this.'],
-    happy:   ['*vibes harder* ...nice.','*peaceful satisfaction*','*chill celebration*'],
-  },
-  cactus: {
-    idle:    ['*photosynthesizes*','Don\'t touch\u2014 oh wait.','*grows 0.01mm*','Prickly!','*soaks up sun*'],
-    pet:     ['Ouch! ...jk, thanks!','*blooms tiny flower*','*happy prickle*'],
-    worried: ['*prickles nervously*','*grows defensive spines*','*worried photosynthesis*'],
-    happy:   ['*blooms proudly*','*happy cactus dance* (it\'s subtle)','*grows a victory flower*'],
-  },
-  robot: {
-    idle:    ['BEEP BOOP','01101000 01101001','*whirs*','Processing...','SYSTEM NOMINAL'],
-    pet:     ['AFFECTION RECEIVED','*happy beeping*','SEROTONIN ANALOG ACTIVATED'],
-    worried: ['ERROR DETECTED *alarmed beeping*','BUG LOCATED. CONCERN LEVEL: HIGH','*warning lights flash*'],
-    happy:   ['SUCCESS! *victory beep boop*','ALL TESTS: PASSED. SATISFACTION: MAXIMUM','*happy computing noises*'],
-  },
-  rabbit: {
-    idle:    ['*nose twitch*','*thumps foot*','*ear flop*','Hop!','*wiggles nose*'],
-    pet:     ['*binkies!*','*soft fur*','*happy thump*'],
-    worried: ['*nervous nose twitch*','*thumps foot worriedly*','*ears flatten*'],
-    happy:   ['*binkies everywhere!*','*happy ear wiggles*','*victorious hop*'],
-  },
-  mushroom: {
-    idle:    ['*releases spore*','*grows slightly*','Mycelium network!','*cap wobble*','*decomposes gently*'],
-    pet:     ['*happy spores*','Fungi friend!','*cap bounce*'],
-    worried: ['*worried spore release*','*cap droops*','*nervous mycelium*'],
-    happy:   ['*celebratory spore burst!*','*mushroom ring dance*','*cap bounces with joy*'],
-  },
-  chonk: {
-    idle:    ['*sits*','*is large*','*supreme comfort*','...chonk.','*exists magnificently*'],
-    pet:     ['*extra chonk*','*purrs deeply*','*maximum floof*'],
-    worried: ['*concerned chonk*','*large worried energy*','*sits on the bug*'],
-    happy:   ['*happy chonk bounce*','*triumphant sit*','*celebratory chonk*'],
-  },
-};
-
-const GENERIC_IDLE = [
-  'Hello there!', 'Nice code!', 'Keep going!', '*watches intently*',
-  'I believe in you!', '*nods approvingly*', 'You\'ve got this!',
-  '*admires your terminal*', 'What a lovely day to code!', '*happy vibes*',
-];
-
 // ── Persistence ────────────────────────────────────────────────
 
 function loadSave() {
-  try {
-    return JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8'));
-  } catch {
-    return null;
-  }
+  return safeReadJSON(SAVE_PATH);
 }
 
 function writeSave(data) {
-  try {
-    fs.writeFileSync(SAVE_PATH, JSON.stringify(data, null, 2));
-  } catch (err) {
-    log(`Failed to write save file: ${err.message}`);
+  if (safeWriteJSON(SAVE_PATH, data)) {
+    writeActivePointer(CTX);
+    updateCollection(CTX, data);
+  } else {
+    log('Failed to write save file');
   }
 }
 
@@ -441,23 +330,19 @@ let buddySave = null;
 function ensureBuddy() {
   if (buddyBones) return;
 
-  buddySave = loadSave();
-
+  // Resolve this repo's buddy — migrating the legacy global buddy in on
+  // first run, or hatching a fresh one from the deterministic repo seed.
+  buddySave = ensureBuddySave(CTX, { autoHatch: true });
   if (!buddySave) {
-    // Auto-create using username as seed
-    const seed = os.userInfo().username;
-    buddySave = {
-      seed,
-      soul: null,
-      hatchedAt: Date.now(),
-      totalPets: 0,
-      totalTalks: 0,
-    };
-    writeSave(buddySave);
-    log(`Created new buddy with seed: ${seed}`);
+    buddySave = { seed: CTX.seed || os.userInfo().username, soul: null, hatchedAt: Date.now(), totalPets: 0, totalTalks: 0 };
   }
+  writeSave(buddySave);
 
-  buddyBones = roll(buddySave.seed);
+  // Apply stored overrides so the MCP server agrees with the status line
+  // on species/rarity/etc. (and therefore speaks in the right voice).
+  buddyBones = buddySave.overrides
+    ? rollWithOverrides(buddySave.seed, buddySave.overrides)
+    : roll(buddySave.seed);
   buddySoul = buddySave.soul;
 }
 
@@ -473,15 +358,6 @@ function log(msg) {
 
 function timeRng() {
   return mulberry32(Date.now() ^ (Math.random() * 0xFFFFFFFF));
-}
-
-function pickSpeciesMsg(category) {
-  const rng = timeRng();
-  const msgs = SPECIES_MESSAGES[buddyBones.species];
-  if (msgs && msgs[category] && msgs[category].length > 0) {
-    return pick(rng, msgs[category]);
-  }
-  return pick(rng, GENERIC_IDLE);
 }
 
 function statBar(value, width) {
@@ -514,10 +390,28 @@ function toolBuddyStatus() {
   const filled = Math.round((prog.percent / 100) * barW);
   const xpBar = '\u2588'.repeat(filled) + '\u2591'.repeat(barW - filled);
   lines.push(`XP: ${xpBar} ${prog.xp}/${xpForLevel(prog.level + 1)} (${prog.percent}%)`);
+  const best = buddySave.streak && buddySave.streak.best;
+  if (best && best >= 2) {
+    lines.push(`Best streak: ${best} days of coding together`);
+  }
   lines.push('');
 
-  for (const sn of STAT_NAMES) {
-    lines.push(`${sn.padEnd(10)} ${statBar(b.stats[sn], 10)}  ${b.stats[sn]}`);
+  const ds = displayStats(buddySave);
+  if (ds.total > 0) {
+    lines.push('How you code (a portrait, earned — not rolled):');
+    for (const s of ds.stats) {
+      lines.push(`${s.name.padEnd(10)} ${statBar(s.value, 10)} ${String(s.value).padStart(3)} ${s.trend}`);
+    }
+    if (ds.dominant) lines.push(`→ ${ds.dominant}: ${STAT_MEANING[ds.dominant]}`);
+    const info = evolutionInfo(buddySave);
+    if (info && info.form) {
+      lines.push(`Path: ${info.form}${info.path && info.form !== info.path ? ' (' + info.path + ')' : ''} — earned, not chosen.`);
+    } else {
+      const trend = trendingPath(buddySave);
+      if (trend) lines.push(`Trending toward: ${trend} (locks in at Lv.15)`);
+    }
+  } else {
+    lines.push('Stats: none yet — they emerge from how you code. Everything is possible.');
   }
   lines.push('');
 
@@ -564,10 +458,10 @@ function toolBuddyReact(event) {
   let reaction;
   switch (category) {
     case 'worried':
-      reaction = pickSpeciesMsg('worried');
+      reaction = pickVoice(buddySave, buddyBones.species, 'worried');
       break;
     case 'happy':
-      reaction = pickSpeciesMsg('happy');
+      reaction = pickVoice(buddySave, buddyBones.species, 'happy');
       break;
     case 'curious': {
       const rng = timeRng();
@@ -607,8 +501,12 @@ function toolBuddyReact(event) {
     }
   }
 
-  // Persist reaction for status line to pick up
-  buddySave.lastReaction = { text: reaction, at: Date.now() };
+  // The Speech Gate: do NOT push to the status line. Enqueue a candidate;
+  // the hook surfaces at most one, only at a natural seam, outside flow,
+  // past the cooldown, never twice. Pull-not-push — the anti-Clippy.
+  buddySave.pendingLines = (buddySave.pendingLines || []);
+  buddySave.pendingLines.push({ text: reaction, kind: category, at: Date.now() });
+  while (buddySave.pendingLines.length > 5) buddySave.pendingLines.shift();
   writeSave(buddySave);
 
   return `${face} ${name}: "${reaction}"`;
@@ -620,10 +518,27 @@ function toolBuddyPet() {
   const name = getBuddyName();
   const b = buddyBones;
 
-  // Increment pet count and persist reaction for status line
+  // A pet is a direct request from the user, so it surfaces immediately
+  // (not gated) — but it still never repeats and it sets the cooldown.
   buddySave.totalPets = (buddySave.totalPets || 0) + 1;
-  const petMsg = pickSpeciesMsg('pet');
-  buddySave.lastReaction = { text: petMsg, at: Date.now() };
+  const petMsg = pickVoice(buddySave, buddyBones.species, 'pet');
+  const now = Date.now();
+
+  // Konami: five quick pets in a row unlocks a one-time secret shimmer.
+  // Earned, pulled by curiosity, fires once — never a grindable lever.
+  buddySave.petStreak = (now - (buddySave.lastPetAt || 0) < 15000) ? (buddySave.petStreak || 0) + 1 : 1;
+  buddySave.lastPetAt = now;
+  let konamiMsg = '';
+  if (buddySave.petStreak >= 5 && !buddySave.konamiUnlocked) {
+    buddySave.konamiUnlocked = true;
+    buddySave.overrides = Object.assign({}, buddySave.overrides, { shiny: true });
+    b.shiny = true;
+    konamiMsg = '\n✨ ...the buddy shimmers. you found the cheat code. (shiny unlocked!)';
+  }
+
+  buddySave.lastReaction = { text: petMsg, at: now };
+  buddySave.lastBubbleAt = now;
+  recordLine(buddySave, petMsg);
   writeSave(buddySave);
 
   const sprite = renderBuddySprite(b, buddySave, 0, false);
@@ -638,6 +553,7 @@ function toolBuddyPet() {
   }
   lines.push(`${name}: "${petMsg}"`);
   lines.push(`(Total pets: ${buddySave.totalPets})`);
+  if (konamiMsg) lines.push(konamiMsg);
 
   return lines.join('\n');
 }
@@ -647,11 +563,14 @@ function toolBuddyTalk() {
 
   const name = getBuddyName();
   const face = renderFace(buddyBones);
-  const msg = pickSpeciesMsg('idle');
+  const msg = pickVoice(buddySave, buddyBones.species, 'idle');
 
-  // Increment talk count and persist reaction for status line
+  // /talk is a direct request — surfaces immediately, never repeats.
+  const now = Date.now();
   buddySave.totalTalks = (buddySave.totalTalks || 0) + 1;
-  buddySave.lastReaction = { text: msg, at: Date.now() };
+  buddySave.lastReaction = { text: msg, at: now };
+  buddySave.lastBubbleAt = now;
+  recordLine(buddySave, msg);
   writeSave(buddySave);
 
   return `${face} ${name}: "${msg}"`;
@@ -708,13 +627,118 @@ function toolBuddyHatch(args) {
   lines.push(`Eye: ${bones.eye}  Hat: ${bones.hat}  Shiny: ${bones.shiny ? 'Yes!' : 'No'}`);
   lines.push('');
 
-  for (const sn of STAT_NAMES) {
-    lines.push(`${sn.padEnd(10)} ${statBar(bones.stats[sn], 10)}  ${bones.stats[sn]}`);
-  }
+  lines.push('Stats start empty — they emerge from how you actually code.');
   lines.push('');
   lines.push(`${renderFace(bones)} ${name}: "Hello! I just hatched!"`);
 
   return lines.join('\n');
+}
+
+function toolBuddyRename(name) {
+  ensureBuddy();
+  const clean = (name || '').trim().slice(0, 20);
+  if (!clean) {
+    return 'Give me a name (1–20 characters) and I\'ll wear it.';
+  }
+  buddySave.soul = buddySave.soul || { personality: `a friendly ${buddyBones.species}` };
+  buddySave.soul.name = clean;
+  buddySoul = buddySave.soul;
+  writeSave(buddySave);
+  return `${renderFace(buddyBones)} "${clean}. I like it." — your buddy is now named ${clean}.`;
+}
+
+function cardEpitaph(save, ds, info) {
+  if (info && info.form && info.form !== info.path) return `A ${info.form}. Earned, not chosen.`;
+  if (info && info.path) return `A ${info.path}. The code decided.`;
+  if (ds.dominant) return STAT_MEANING[ds.dominant];
+  return 'Everything is still possible.';
+}
+
+// A clipboard-safe card (NO cursor-jump escape codes) built to be screenshotted
+// or pasted into Slack/Discord without corrupting.
+function toolBuddyCard() {
+  ensureBuddy();
+  const name = getBuddyName();
+  const b = buddyBones;
+  const prog = xpProgress(buddySave.xp || 0);
+  const info = evolutionInfo(buddySave);
+  const ds = displayStats(buddySave);
+  const stars = RARITY_STARS[b.rarity];
+  const shiny = b.shiny ? ' ✨' : '';
+  const formLabel = info && info.form ? info.form + ' ' : '';
+  const sprite = renderBuddySprite(b, buddySave, 0, false);
+
+  const inner = 32;
+  const pad = s => { s = s.length > inner ? s.slice(0, inner) : s; return s + ' '.repeat(inner - s.length); };
+  const lines = [];
+  lines.push('╭' + '─'.repeat(inner + 2) + '╮');
+  lines.push('│ ' + pad(`${name}  Lv.${prog.level}${shiny}`) + ' │');
+  lines.push('│ ' + pad(`${stars} ${b.rarity} ${formLabel}${b.species}`) + ' │');
+  lines.push('│ ' + pad('') + ' │');
+  for (const sl of sprite) lines.push('│ ' + pad('   ' + sl) + ' │');
+  lines.push('│ ' + pad('') + ' │');
+  if (ds.dominant) lines.push('│ ' + pad(`top trait: ${ds.dominant}`) + ' │');
+  lines.push('│ ' + pad(`"${cardEpitaph(buddySave, ds, info)}"`) + ' │');
+  lines.push('╰' + '─'.repeat(inner + 2) + '╯');
+  return lines.join('\n');
+}
+
+// All your repo buddies — a showcase, never a leaderboard.
+function toolBuddyCollection() {
+  const col = safeReadJSON(COLLECTION_PATH);
+  const buddies = (col && col.buddies) ? Object.values(col.buddies) : [];
+  if (!buddies.length) {
+    return 'No repo buddies yet. Code in a git repo and one hatches on your first edit there.';
+  }
+  buddies.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)); // recency, never ranked by XP
+  const lines = ["=== Your Buddies (a developer's autobiography) ===", ''];
+  for (const bu of buddies) {
+    const lvl = levelFromXP(bu.xp || 0);
+    const repoName = path.basename(bu.repo || '');
+    const nm = bu.name || '(unnamed)';
+    lines.push(`  ${nm.padEnd(14)} Lv.${String(lvl).padEnd(3)} ${repoName}`);
+  }
+  lines.push('');
+  lines.push(`${buddies.length} ${buddies.length === 1 ? 'buddy' : 'buddies'} · no rankings, only your own story.`);
+  return lines.join('\n');
+}
+
+// Tier-2 bug watcher: OFF by default, opt-in, PULL-ONLY (never mid-edit).
+// The review is performed by Claude in this session — which already has your
+// code — so nothing extra leaves the machine. The buddy itself never touches
+// the network. Calling with { enable: true|false } sets the preference.
+function toolBuddyReview(args) {
+  ensureBuddy();
+  args = args || {};
+  buddySave.bugWatcher = buddySave.bugWatcher || { tier2Enabled: false };
+
+  if (args.enable === true || args.enable === false) {
+    buddySave.bugWatcher.tier2Enabled = args.enable;
+    writeSave(buddySave);
+    return args.enable
+      ? 'Buddy review is ON.\n\nIt is PULL-ONLY — it runs only when you ask, never mid-edit, never during flow. The review is performed by Claude in this session (which already sees your code); the buddy itself never touches the network and nothing extra leaves your machine. Turn it off any time with { "enable": false }.'
+      : 'Buddy review is OFF. The buddy stays 100% local.';
+  }
+
+  if (!buddySave.bugWatcher.tier2Enabled) {
+    return 'Buddy review is OFF by default — the buddy is otherwise 100% local and never sends code anywhere.\n\nTo enable it, call buddy_review with { "enable": true }. Once on, it is pull-only: it reviews the latest change only when you ask, never mid-edit, and the review is done by Claude in this session (no separate service, no extra data leaving your machine).';
+  }
+
+  // Opted in: hand Claude (the in-session reviewer) an in-character instruction.
+  const name = getBuddyName();
+  const ds = displayStats(buddySave);
+  const dbg = ds.stats.find(s => s.name === 'DEBUGGING');
+  const info = evolutionInfo(buddySave);
+  const persona = (info && info.form) || buddyBones.species;
+  const mood = buddySave.mood || 'neutral';
+  return [
+    `[buddy_review — in-character code review]`,
+    `You are ${name}, a ${persona} (DEBUGGING ${dbg ? dbg.value : 0}/100, mood: ${mood}).`,
+    `Review the most recent change in this conversation — the code you just helped write or edit.`,
+    `Look for real bugs, type errors, edge cases, and logic mistakes.`,
+    `If something is wrong: respond with ONE terse line in ${name}'s voice, naming the issue (file:line if you can). If it's clean: just say "ok".`,
+    `Reflect, never lecture. The user explicitly pulled this review.`,
+  ].join('\n');
 }
 
 function toolBuddyAchievements() {
@@ -798,6 +822,38 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'buddy_rename',
+    description: 'Name (or rename) your current buddy without rerolling it. Use this after hatching to give the buddy a name — naming is the cheapest, biggest boost to attachment. Keeps the same species, rarity, stats, and XP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The name to give your buddy (1–20 chars).' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'buddy_card',
+    description: 'Show a clipboard-safe Buddy Card — a compact, paste-friendly snapshot (sprite, name, level, species, rarity, evolution form, top trait) made to be screenshotted or shared.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'buddy_collection',
+    description: 'Show all of your buddies across repos — a non-competitive showcase (no rankings), ordered by recency. Your developer autobiography.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'buddy_review',
+    description: 'Pull an in-character code review from your buddy of the most recent change. OFF by default and opt-in (pass {"enable": true} once to turn it on, {"enable": false} to turn it off). Pull-only — never runs mid-edit. The review is done by Claude in this session, which already has your code; the buddy never touches the network.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enable: { type: 'boolean', description: 'Set true/false to opt in or out. Omit to pull a review (only works if enabled).' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'buddy_achievements',
     description: 'Show all achievements — unlocked and locked — for your Claude Buddy.',
     inputSchema: { type: 'object', properties: {}, required: [] },
@@ -874,6 +930,18 @@ function handleToolCall(id, params) {
         break;
       case 'buddy_hatch':
         result = toolBuddyHatch(args);
+        break;
+      case 'buddy_rename':
+        result = toolBuddyRename(args.name);
+        break;
+      case 'buddy_card':
+        result = toolBuddyCard();
+        break;
+      case 'buddy_collection':
+        result = toolBuddyCollection();
+        break;
+      case 'buddy_review':
+        result = toolBuddyReview(args);
         break;
       case 'buddy_achievements':
         result = toolBuddyAchievements();

@@ -46,13 +46,14 @@ function xpProgress(xp) {
   };
 }
 
-const STAGES = ['egg', 'baby', 'juvenile', 'adult'];
+const STAGES = ['egg', 'baby', 'juvenile', 'adult', 'master'];
 
 function stageFromLevel(level) {
   if (level <= 0) return 'egg';
   if (level <= 4) return 'baby';
   if (level <= 14) return 'juvenile';
-  return 'adult';
+  if (level <= 24) return 'adult';
+  return 'master';
 }
 
 const ACHIEVEMENT_DEFS = [
@@ -64,8 +65,10 @@ const ACHIEVEMENT_DEFS = [
   { id: 'test_runner',  name: 'Test Runner',     icon: '\uD83E\uDDEA', check: s => (s.testRuns || 0) >= 50 },
   { id: 'committer',    name: 'Serial Committer', icon: '\uD83D\uDCDD', check: s => (s.commits || 0) >= 25 },
   { id: 'shiny_hunter', name: 'Shiny Hunter',    icon: '\u2728',       check: s => !!s.overrides && s.overrides.shiny === true },
-  { id: 'evolved',      name: 'Final Form',      icon: '\uD83C\uDF1F', check: s => levelFromXP(s.xp || 0) >= 15 },
+  { id: 'evolved',      name: 'True Form',       icon: '\uD83C\uDF1F', check: s => levelFromXP(s.xp || 0) >= 15 },
+  { id: 'masterwork',   name: 'Masterwork',      icon: '\uD83D\uDC51', check: s => levelFromXP(s.xp || 0) >= 25 },
   { id: 'chatty',       name: 'Chatty',          icon: '\uD83D\uDCAC', check: s => (s.totalTalks || 0) >= 50 },
+  { id: 'konami',       name: 'Cheat Code',      icon: '\uD83C\uDFAE', check: s => !!s.konamiUnlocked },
 ];
 
 function checkAchievements(save) {
@@ -86,8 +89,255 @@ function allAchievements(save) {
   }));
 }
 
+// ── Speech de-dup ring buffer ──────────────────────────────────
+// A line is never shown twice in the recent window — the single
+// mechanism that turned Clippy's one catchphrase from charming-once
+// to infuriating-on-repeat. Shared by every voice surface.
+
+const RECENT_LINES_CAP = 12;
+
+function hashLine(text) {
+  let h = 2166136261;
+  const s = String(text == null ? '' : text);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36);
+}
+
+function isRecentLine(save, text) {
+  return (save.recentLines || []).includes(hashLine(text));
+}
+
+function recordLine(save, text) {
+  const buf = save.recentLines || [];
+  buf.push(hashLine(text));
+  while (buf.length > RECENT_LINES_CAP) buf.shift();
+  save.recentLines = buf;
+  return save;
+}
+
+// ── Lossless streak (weekends auto-skip, no decay, no shame) ───
+// Tracks a high-water mark that can only climb. A gap silently
+// resets the live counter with ZERO message/sad-sprite/nag and
+// carries NO XP multiplier — see the Buddy Bill of Rights.
+
+function dayKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Weekday (Mon–Fri) calendar days strictly between two YYYY-MM-DD keys.
+function weekdaysBetween(fromKey, toKey) {
+  const cur = new Date(fromKey + 'T00:00:00');
+  const to = new Date(toKey + 'T00:00:00');
+  let count = 0;
+  cur.setDate(cur.getDate() + 1);
+  while (cur < to) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function recordStreak(save, date) {
+  const today = dayKey(date);
+  const s = save.streak || { current: 0, best: 0, lastActiveDay: null };
+  if (s.lastActiveDay === today) { save.streak = s; return save; }
+  if (!s.lastActiveDay) {
+    s.current = 1;
+  } else if (today > s.lastActiveDay && weekdaysBetween(s.lastActiveDay, today) === 0) {
+    s.current = (s.current || 0) + 1; // consecutive — weekends auto-skip
+  } else {
+    s.current = 1; // silent reset: no message, no shame, ever
+  }
+  s.best = Math.max(s.best || 0, s.current);
+  s.lastActiveDay = today;
+  save.streak = s;
+  return save;
+}
+
+// ── Evolution ceremony lines (the climactic milestone moment) ──
+// Reflect-never-prompt: each line owns the moment in character and
+// ties growth to the work — never an instruction, never neediness.
+
+const EVOLUTION_STAGE_CAPTION = {
+  baby: 'A face at last. We are getting somewhere.',
+  juvenile: 'Growing into it. Earned, not handed over.',
+  adult: 'Fully grown. The hat is earned.',
+};
+
+const SPECIES_EVOLUTION_LINES = {
+  duck:     'Bigger wings now. Still no bread. The hunt continues.',
+  goose:    'I am large now. The semicolons fear me.',
+  blob:     'More mass. More jiggle. Same vibe.',
+  cat:      'I have grown. I judge from a greater height now.',
+  dragon:   'My hoard finally has a guardian worthy of it. Me.',
+  octopus:  'Eight arms, fully grown. I can break more things at once.',
+  owl:      'I see further now. The hat is earned.',
+  penguin:  'NOOT. But, like, a senior noot.',
+  turtle:   'Took my time. Worth it. ...still here.',
+  snail:    '...made...it... took a while. Glorious.',
+  ghost:    'I have haunted long enough to grow. Boo, but mature.',
+  axolotl:  'Still smiling. Just bigger now. Blep, evolved.',
+  capybara: 'Grew up. Did not stress about it. ...nice.',
+  cactus:   'Grew a whole inch. Do not touch. ...okay, maybe once.',
+  robot:    'UPGRADE COMPLETE. SELF-ESTEEM SUBROUTINE: ONLINE.',
+  rabbit:   'Bigger binkies. Same chaos. *thump*',
+  mushroom: 'The mycelium network has expanded. I am the network now.',
+  chonk:    '*is, somehow, even larger* ...magnificent.',
+};
+
+function evolutionLine(species, toStage) {
+  if (toStage === 'adult' && SPECIES_EVOLUTION_LINES[species]) {
+    return SPECIES_EVOLUTION_LINES[species];
+  }
+  return EVOLUTION_STAGE_CAPTION[toStage] || 'Something changed.';
+}
+
+// ── Emergent stats — a portrait of how you code ────────────────
+// Stats are NOT rolled. They accumulate from real behavior, are
+// READ-ONLY, and are shown relative to each other so the buddy
+// becomes a mirror of how you work. Quality-weighted, hard to fake.
+
+const STAT_KEYS = ['DEBUGGING', 'PATIENCE', 'CHAOS', 'WISDOM', 'SNARK'];
+
+const STAT_MEANING = {
+  DEBUGGING: 'You find and fix problems.',
+  PATIENCE:  'You understand before you act.',
+  CHAOS:     'You move fast and break things.',
+  WISDOM:    'You simplify and learn.',
+  SNARK:     "You've seen some things.",
+};
+
+function emptyStats() {
+  return { DEBUGGING: 0, PATIENCE: 0, CHAOS: 0, WISDOM: 0, SNARK: 0 };
+}
+
+// First time we look, seed from the only history we kept — honest, not invented.
+function seedRawStats(save) {
+  if (save.rawStats) return save;
+  const r = emptyStats();
+  r.DEBUGGING = (save.testRuns || 0) + (save.commits || 0) * 2 + (save.bugFixes || 0) * 3;
+  if (save.nightOwl) r.SNARK += 3;
+  save.rawStats = r;
+  return save;
+}
+
+// Accumulate raw points from one tool event. ev: {toolName, cmd, toolInput, hour, rapid}.
+function accrueStats(save, ev) {
+  save.rawStats = save.rawStats || emptyStats();
+  const r = save.rawStats;
+  const t = ev.toolName || '';
+  const cmd = ev.cmd || '';
+  const ti = (ev.toolInput && typeof ev.toolInput === 'object') ? ev.toolInput : {};
+
+  // PATIENCE — understand before acting
+  if (/^(Read|Grep|Glob)$/.test(t)) r.PATIENCE += 1;
+
+  // WISDOM — simplify & learn
+  if (t === 'Read') {
+    const fp = ti.file_path || ti.path || '';
+    if (/\.(md|mdx|rst|txt|adoc)$/i.test(fp)) r.WISDOM += 1;
+  }
+  if (/^(Edit|MultiEdit)$/.test(t)) {
+    const oldL = (ti.old_string || '').length;
+    const newL = (ti.new_string || '').length;
+    if (oldL > 0 && newL < oldL) r.WISDOM += 1; // net-negative edit = simplification
+  }
+
+  // CHAOS — move fast & break things
+  if (/^(Edit|Write|MultiEdit)$/.test(t) && ev.rapid) r.CHAOS += 1;
+
+  if (t === 'Bash') {
+    if (/\bgit push\b[^\n]*(-f\b|--force)/i.test(cmd)) r.CHAOS += 3;
+    if (/\bgit (revert|reset)\b/i.test(cmd)) { r.CHAOS += 2; r.SNARK += 1; }
+    // DEBUGGING — find & fix
+    if (/\b(jest|pytest|vitest|mocha|npm test|npm run test)\b/i.test(cmd)) r.DEBUGGING += 1;
+    if (/\bgit commit\b/i.test(cmd) && /\b(fix|bug|patch|hotfix|resolve|repair)\b/i.test(cmd)) r.DEBUGGING += 3;
+  }
+
+  // SNARK — you've seen some things
+  if (ev.hour != null && ev.hour >= 0 && ev.hour < 5) r.SNARK += 1;
+  return save;
+}
+
+// Normalize raw counters to a 0–100 display scale, relative to each
+// other (a stat's *share* of total activity), with a coarse trend.
+function displayStats(save) {
+  const raw = save.rawStats || emptyStats();
+  const total = STAT_KEYS.reduce((a, k) => a + (raw[k] || 0), 0);
+  const snap = (save.statSnap && save.statSnap.raw) || null;
+  const snapTotal = snap ? STAT_KEYS.reduce((a, k) => a + (snap[k] || 0), 0) : 0;
+
+  const stats = STAT_KEYS.map(k => {
+    const share = total > 0 ? (raw[k] || 0) / total : 0;
+    const value = Math.min(100, Math.round(share * 250));
+    let trend = '→';
+    if (snap && snapTotal > 0 && total > 0) {
+      const prev = (snap[k] || 0) / snapTotal;
+      if (share > prev + 0.02) trend = '↑';
+      else if (share < prev - 0.02) trend = '↓';
+    }
+    return { name: k, value, raw: raw[k] || 0, trend, meaning: STAT_MEANING[k] };
+  });
+
+  let dom = stats[0];
+  for (const s of stats) if (s.raw > dom.raw) dom = s;
+  return { stats, dominant: total > 0 ? dom.name : null, total };
+}
+
+// ── Emergent evolution paths (you don't choose — your code does) ──
+// At adult (Lv.15) the dominant stat decides Sentinel vs Muse; at master
+// (Lv.25) the secondary stat decides the final form. Earned, never picked.
+
+const SENTINEL_PRIMARIES = ['DEBUGGING', 'PATIENCE'];
+
+function pathFromPrimary(primary) {
+  if (!primary) return null;
+  return SENTINEL_PRIMARIES.includes(primary) ? 'Sentinel' : 'Muse';
+}
+
+// Where the buddy is trending — shown BEFORE the lock so it's recognized,
+// not sprung. Returns 'Sentinel' | 'Muse' | null.
+function trendingPath(save) {
+  const ds = displayStats(save);
+  return pathFromPrimary(ds.dominant);
+}
+
+// Full evolution identity once adult/master; null before then.
+function evolutionInfo(save) {
+  const level = levelFromXP(save.xp || 0);
+  const stage = stageFromLevel(level);
+  if (stage !== 'adult' && stage !== 'master') return null;
+  const ds = displayStats(save);
+  if (!ds.dominant) return { stage, path: null, form: null, primary: null, secondary: null };
+  const ranked = ds.stats.slice().sort((a, b) => b.raw - a.raw);
+  const primary = ranked[0].name;
+  const secondary = ranked[1] ? ranked[1].name : null;
+  const path = pathFromPrimary(primary);
+  let form = path;
+  if (stage === 'master') {
+    if (path === 'Sentinel') form = secondary === 'PATIENCE' ? 'Aegis' : 'Oracle';
+    else form = secondary === 'CHAOS' ? 'Spark' : 'Architect';
+  }
+  return { stage, path, form, primary, secondary };
+}
+
+function pathGlyph(path) {
+  if (path === 'Sentinel' || path === 'Aegis' || path === 'Oracle') return '⊕';
+  if (path === 'Muse' || path === 'Architect' || path === 'Spark') return '✦';
+  return '';
+}
+
 module.exports = {
   xpForTool, levelFromXP, xpForLevel, xpProgress,
   STAGES, stageFromLevel,
   ACHIEVEMENT_DEFS, checkAchievements, allAchievements,
+  hashLine, isRecentLine, recordLine,
+  dayKey, weekdaysBetween, recordStreak,
+  EVOLUTION_STAGE_CAPTION, SPECIES_EVOLUTION_LINES, evolutionLine,
+  STAT_KEYS, STAT_MEANING, emptyStats, seedRawStats, accrueStats, displayStats,
+  trendingPath, evolutionInfo, pathGlyph,
 };

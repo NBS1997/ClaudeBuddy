@@ -30,3 +30,7 @@ Examples:
 - `/hatch axolotl epic crown` → `{ "species": "axolotl", "rarity": "epic", "hat": "crown" }`
 
 Display the full result — it shows the hatching reveal with sprite, rarity badge, stats, and greeting.
+
+**Then, if the user did NOT specify a name**, warmly invite them to name their new buddy — one short line, and make it clear it's optional (they can skip). Naming is the single biggest boost to how attached someone gets to their buddy, so it's worth offering, but never push.
+
+When the user gives a name, call the `buddy_rename` MCP tool with it (this keeps the same buddy — species, rarity, stats, XP — and just gives it a name). If they decline or ignore it, leave the buddy unnamed and move on. Do not ask twice.

@@ -266,15 +266,27 @@ const PET_HEARTS = [
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
+const {
+  resolveContext, ensureBuddySave, safeWriteJSON,
+  writeActivePointer, updateCollection, ensureGitignore,
+} = require('./buddy-paths.js');
+
+const CTX = resolveContext(process.cwd());
+const SAVE_PATH = CTX.savePath;
 
 function loadSave() {
-  try { return JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8')); }
-  catch { return null; }
+  // Adopt the migrated global buddy if one exists; otherwise null so
+  // setup() hatches a fresh repo buddy. autoHatch:false keeps a bare
+  // `node claude-buddy.js` in a throwaway dir from leaving a buddy behind.
+  return ensureBuddySave(CTX, { autoHatch: false });
 }
 
 function writeSave(data) {
-  fs.writeFileSync(SAVE_PATH, JSON.stringify(data, null, 2));
+  if (safeWriteJSON(SAVE_PATH, data)) {
+    if (CTX.gitRoot) ensureGitignore(CTX.gitRoot);
+    writeActivePointer(CTX);
+    updateCollection(CTX, data);
+  }
 }
 
 // ── Messages ────────────────────────────────────────────────

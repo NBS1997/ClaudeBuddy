@@ -11,8 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
-const { levelFromXP, xpProgress, stageFromLevel } = require('./buddy-progression.js');
+const { levelFromXP, xpProgress, stageFromLevel, evolutionLine, displayStats, evolutionInfo, pathGlyph } = require('./buddy-progression.js');
+const { readActiveSavePath, safeReadJSON, resolveContext } = require('./buddy-paths.js');
 const SALT = 'friend-2026-401';
 
 // ── Minimal PRNG (same as companion.ts) ─────────────────────
@@ -44,27 +44,6 @@ const EYES = ['\u00B7','\u2726','\u00D7','\u25C9','@','\u00B0'];
 const HATS = ['none','crown','tophat','propeller','halo','wizard','beanie','tinyduck'];
 const STAT_NAMES = ['DEBUGGING','PATIENCE','CHAOS','WISDOM','SNARK'];
 const IDLE_SEQ = [0,0,0,0,1,0,0,0,-1,0,0,2,0,0,0];
-
-const IDLE_MSGS = {
-  duck:['*preens*','Quack!','*waddles*'],
-  goose:['HONK!','*menacing*','*steals ;*'],
-  blob:['*jiggles*','Bloop!','*wobbles*'],
-  cat:['*purrs*','Mrow.','*judges*'],
-  dragon:['*tiny roar*','Rawr!','*warm*'],
-  octopus:['*waves*','Blub!','*ink*'],
-  owl:['Hoo!','*wise nod*','*rotates*'],
-  penguin:['Noot!','*slides*','*waddles*'],
-  turtle:['*slow blink*','...here.','Steady.'],
-  snail:['*trail*','~~~~~','...almost'],
-  ghost:['Boo~','*floats*','*phases*'],
-  axolotl:['*gill wiggle*','Blep!','*smiles*'],
-  capybara:['*vibes*','*chill*','...'],
-  cactus:['*grows*','Prickly!','*sun*'],
-  robot:['BEEP','01101000','*whirs*'],
-  rabbit:['*twitch*','Hop!','*flop*'],
-  mushroom:['*spore*','*grows*','Fungi!'],
-  chonk:['*sits*','*large*','...chonk'],
-};
 
 // ── Roll (same deterministic logic) ─────────────────────────
 
@@ -189,9 +168,28 @@ function renderBuddySprite(bones, save, frame, blink) {
 
 // ── Main ────────────────────────────────────────────────────
 
-let save;
-try { save = JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8')); }
-catch { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
+// Resolve THIS session's buddy from the cwd Claude Code passes on stdin, so
+// the status line is stable per-repo and never flips to another project's
+// buddy via the shared active pointer. Falls back to the pointer, then global.
+function sessionCwd() {
+  try {
+    if (process.stdin.isTTY) return null;
+    const raw = fs.readFileSync(0, 'utf8');
+    if (!raw || !raw.trim()) return null;
+    const j = JSON.parse(raw);
+    return j.cwd || (j.workspace && (j.workspace.current_dir || j.workspace.project_dir)) || null;
+  } catch { return null; }
+}
+
+let SAVE_PATH = null;
+const cwd = sessionCwd();
+if (cwd) {
+  const ctx = resolveContext(cwd);
+  if (safeReadJSON(ctx.savePath)) SAVE_PATH = ctx.savePath; // this repo's own buddy
+}
+if (!SAVE_PATH) SAVE_PATH = readActiveSavePath();
+const save = SAVE_PATH ? safeReadJSON(SAVE_PATH) : null;
+if (!save) { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
 
 const bones = roll(save.seed);
 // Apply any stored overrides
@@ -216,6 +214,14 @@ let frame, blink = false;
 if (step === -1) { frame = 0; blink = true; }
 else { frame = step % BODIES[bones.species].length; }
 
+// Mood-driven eyes — the silent half of voice. The hook sets save.mood from
+// your recent activity; "resting" is derived here from time since last tool.
+const MOOD_EYE = { flow: '◡', debugging: '◉', shipping: '✦', resting: '-' };
+let mood = save.mood || 'neutral';
+if (save.lastToolAt && Date.now() - save.lastToolAt > 300000) mood = 'resting';
+const moodEye = MOOD_EYE[mood];
+if (moodEye && !blink) bones.eye = moodEye;
+
 let sprite = renderBuddySprite(bones, save, frame, blink);
 
 // ── Speech bubble (from MCP reactions, fades after 10s like original) ──
@@ -239,6 +245,42 @@ const rc = RARITY_C[bones.rarity] || RARITY_C.common;
 const RST = '\x1b[0m';
 const DIM = '\x1b[2m';
 const ITAL = '\x1b[3m';
+
+// ── Evolution Ceremony ─────────────────────────────────────────
+// The hook writes save.lastEvolution on every stage transition. For
+// ~15s after, the buddy's growth gets a moment instead of silently
+// swapping sprites — the climactic payoff the progression earns.
+const CEREMONY_TTL = 15000;
+if (save.lastEvolution && save.lastEvolution.to && Date.now() - save.lastEvolution.at < CEREMONY_TTL) {
+  const toStage = String(save.lastEvolution.to);
+  const stageLabel = toStage.toUpperCase();
+  const article = /^[AEIOU]/.test(stageLabel) ? 'an' : 'a';
+  const lore = evolutionLine(bones.species, toStage);
+  const evoSprite = renderBuddySprite(bones, save, 0, false);
+  const form = save.lastEvolution.form;
+  const primary = save.lastEvolution.primary;
+  const headline = form
+    ? [`  ${name} has become ${/^[AEIOU]/.test(form.toUpperCase()) ? 'an' : 'a'} ${form.toUpperCase()}.`,
+       primary ? `  Your ${primary.toLowerCase()} shaped this.` : '  Your work shaped this.']
+    : [`  ${name} is now ${article} ${stageLabel}.`, '  Your work shaped this.'];
+  const content = [
+    '  ✦ EVOLUTION ✦',
+    '',
+    ...evoSprite.map(l => '  ' + l),
+    '',
+    ...headline,
+    `  "${lore}"`,
+  ];
+  const innerW = Math.min(46, Math.max(12, ...content.map(l => l.length)));
+  const card = [`${rc}╭${'─'.repeat(innerW + 2)}╮${RST}`];
+  for (const l of content) {
+    const line = l.length > innerW ? l.slice(0, innerW) : l;
+    card.push(`${rc}│${RST} ${line}${' '.repeat(innerW - line.length)} ${rc}│${RST}`);
+  }
+  card.push(`${rc}╰${'─'.repeat(innerW + 2)}╯${RST}`);
+  process.stdout.write(card.join('\n'));
+  process.exit(0);
+}
 
 // ── Layout: match original CompanionSprite.tsx ──
 // Original layout: sprite column right-aligned, name centered below,
@@ -295,7 +337,28 @@ const namePad = Math.max(0, spriteCol + Math.floor((spriteW - nameW) / 2));
 const prog = xpProgress(save.xp || 0);
 const stage = stageFromLevel(prog.level);
 const levelTag = prog.level > 0 ? ` Lv.${prog.level}` : '';
-out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${name}${levelTag}${RST}`);
+const bestStreak = (save.streak && save.streak.best) || 0;
+const streakTag = bestStreak >= 3 ? ` ·${bestStreak}d` : '';
+const evoInfo = evolutionInfo(save);
+const pathBadge = evoInfo && evoInfo.path ? `${pathGlyph(evoInfo.path)} ` : '';
+out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${pathBadge}${name}${levelTag}${streakTag}${RST}`);
+
+// Always-on emergent stat strip: a compact, glanceable portrait of how
+// you code (the dominant trait highlighted). Hidden until stats exist.
+const ds = displayStats(save);
+if (ds.total > 0) {
+  const ABBR = { DEBUGGING: 'DBG', PATIENCE: 'PAT', CHAOS: 'CHA', WISDOM: 'WIS', SNARK: 'SNK' };
+  const cells = 4;
+  const plainLen = ds.stats.length * (3 + cells) + (ds.stats.length - 1);
+  const stripCol = Math.max(1, cols - plainLen);
+  const parts = ds.stats.map(s => {
+    const filled = Math.max(0, Math.min(cells, Math.round((s.value / 100) * cells)));
+    const bar = '▰'.repeat(filled) + '▱'.repeat(cells - filled);
+    const tint = s.name === ds.dominant ? rc : DIM;
+    return `${tint}${ABBR[s.name]}${bar}${RST}`;
+  });
+  out.push(`\x1b[${stripCol}G${parts.join(' ')}`);
+}
 
 if (save.lastLevelUp && Date.now() - save.lastLevelUp.at < 10000) {
   out.push(`\x1b[${namePad + 1}G${rc}\x1b[1m\u2B06 Level ${save.lastLevelUp.level}!${RST}`);
