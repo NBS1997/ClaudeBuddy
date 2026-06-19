@@ -80,6 +80,7 @@ Copy the `skills/` directory into `~/.claude/skills/` for global slash commands:
 | `/pet` | Pet your buddy |
 | `/talk` | Buddy says something |
 | `/hatch [options]` | Hatch a new buddy with overrides |
+| `/name <name>` | Name or rename your buddy (no reroll) |
 | `/achievements` | Show achievement progress |
 
 ## The 18 Species
@@ -150,6 +151,7 @@ The MCP server exposes 6 tools that Claude can call during conversations:
 | `buddy_pet` | Pet interaction with hearts |
 | `buddy_talk` | Random species-appropriate message |
 | `buddy_hatch` | Hatch a new buddy with species/rarity/eye/hat/name overrides |
+| `buddy_rename` | Name/rename the current buddy without rerolling it |
 | `buddy_achievements` | Show all achievement progress |
 
 ## Hatching Control
@@ -170,6 +172,18 @@ Any trait not specified rolls randomly. Stats always emerge from your coding beh
 The buddy sits at the bottom-right of your Claude Code terminal. It animates using the original idle sequence from `CompanionSprite.tsx`, blinks periodically, and shows speech bubbles when MCP tools fire reactions.
 
 Speech bubbles from MCP reactions appear for 10 seconds and fade — matching the original's `BUBBLE_SHOW * TICK_MS` timing.
+
+### The Speech Gate (anti-Clippy)
+
+A buddy that interrupts your flow gets uninstalled. So `buddy_react` never pushes a bubble directly — it *enqueues* a candidate, and the XP hook decides whether it surfaces. A reaction appears **only at a natural seam** (a commit, a test run, the start of a session), **never while you're heads-down** (detected "flow"), **never within ~2 minutes of the last one**, and **never the same line twice** (a recent-line ring buffer). When you're in the zone, the buddy goes quiet. `/pet` and `/talk` are direct requests, so they always answer immediately.
+
+### Evolution Ceremony
+
+When your buddy crosses an evolution threshold (egg → baby → juvenile → adult), the status line shows a brief bordered reveal — the new sprite, your buddy's name, a dry in-character line, and a nod to the work that earned it. It fades after ~15 seconds.
+
+### Streak
+
+A calm `·Nd` tag shows your **best** coding streak — a high-water mark that only ever climbs. Weekends auto-skip. A gap resets the live count silently: no fire emoji, no "you broke your streak," no nag, no XP penalty. The streak is a fond record, never a leash.
 
 ## Architecture
 
@@ -228,9 +242,24 @@ The v2 design spec (`docs/specs/2026-04-12-buddy-v2-design.md`) reimagines the b
 - **Emergent evolution** — your dominant stat determines the evolution path (Sentinel/Muse → Aegis/Oracle/Architect/Spark). You don't choose — your code chooses.
 - **Buddy memory** — references recent events, knows your project, speaks contextually
 - **Mood system** — flow, debugging, shipping, exploring, resting — driven by current activity
-- **Autonomous bug watcher** — heuristic scanning (free) + LLM review on edits (Haiku, pennies)
+- **Opt-in bug watcher** — local heuristic scanning (free, never leaves your machine) plus an **off-by-default, opt-in** LLM review you pull on demand at a natural pause — never mid-edit, never during flow. Everything else about the buddy is 100% local; this is the one feature that would ever send code anywhere, and only with your explicit consent. See the [Buddy Bill of Rights](#buddy-bill-of-rights).
 - **Session journal** — auto-generated development diary
-- **Streaks & milestones** — coding streaks with XP multipliers, personal records
+- **Streaks & milestones** — lossless best-streak records (no decay, no shame, no XP multiplier on gameable counts)
+
+## Buddy Bill of Rights
+
+The buddy is a companion, not an engagement-farming gimmick. These invariants are load-bearing — every feature, current and future, honors them. They come from research into why people love virtual companions (Tamagotchi, Pokémon, Finch, GitHub's Octocat) and why they uninstall them (Clippy, the passive-aggressive Duolingo owl, BonziBuddy's spyware, "CLI-Pet" that starves when you don't commit).
+
+1. **The status line is the only voice surface.** Zero OS notifications, zero popups, zero focus-steal. The buddy costs zero attention to ignore.
+2. **Reflect, never prompt.** The buddy comments on what already happened; it never tells you what to do ("you should run your tests" = Clippy) and never references its own feelings about your absence ("I missed you" = Replika).
+3. **Speech is pull-based and seam-gated.** Reactions surface only at a natural seam, outside flow, past a cooldown, never the same line twice. In flow: silence.
+4. **No decay. No death. No guilt.** Returning after two weeks away yields a happy buddy — never a sad, sick, starving, or dying one.
+5. **No streak you can "break."** Best/high-water-mark only — no decaying counter, no fire-emoji escalation, no XP multiplier on gameable counts.
+6. **Stats are an earned, read-only portrait** of how you code — never a dashboard to grind, never a number whose only purpose is to be maximized.
+7. **Surprise rewards only garnish real work** — never a repeatable, work-free lever. `/pet` and `/talk` give no loot.
+8. **Default-local, and we say so.** No code or data leaves your machine without explicit, named, opt-in consent. The future LLM bug-watcher is off by default and pull-only.
+9. **No leaderboards, no ranking.** You compete only with your own past; any collection is an autobiography, never a scoreboard.
+10. **Memory is accurate or silent.** The buddy only recalls what it can verify from your logged activity — a wrong memory is worse than none.
 
 ## Origin
 

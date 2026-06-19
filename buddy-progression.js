@@ -86,8 +86,118 @@ function allAchievements(save) {
   }));
 }
 
+// ── Speech de-dup ring buffer ──────────────────────────────────
+// A line is never shown twice in the recent window — the single
+// mechanism that turned Clippy's one catchphrase from charming-once
+// to infuriating-on-repeat. Shared by every voice surface.
+
+const RECENT_LINES_CAP = 12;
+
+function hashLine(text) {
+  let h = 2166136261;
+  const s = String(text == null ? '' : text);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(36);
+}
+
+function isRecentLine(save, text) {
+  return (save.recentLines || []).includes(hashLine(text));
+}
+
+function recordLine(save, text) {
+  const buf = save.recentLines || [];
+  buf.push(hashLine(text));
+  while (buf.length > RECENT_LINES_CAP) buf.shift();
+  save.recentLines = buf;
+  return save;
+}
+
+// ── Lossless streak (weekends auto-skip, no decay, no shame) ───
+// Tracks a high-water mark that can only climb. A gap silently
+// resets the live counter with ZERO message/sad-sprite/nag and
+// carries NO XP multiplier — see the Buddy Bill of Rights.
+
+function dayKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Weekday (Mon–Fri) calendar days strictly between two YYYY-MM-DD keys.
+function weekdaysBetween(fromKey, toKey) {
+  const cur = new Date(fromKey + 'T00:00:00');
+  const to = new Date(toKey + 'T00:00:00');
+  let count = 0;
+  cur.setDate(cur.getDate() + 1);
+  while (cur < to) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function recordStreak(save, date) {
+  const today = dayKey(date);
+  const s = save.streak || { current: 0, best: 0, lastActiveDay: null };
+  if (s.lastActiveDay === today) { save.streak = s; return save; }
+  if (!s.lastActiveDay) {
+    s.current = 1;
+  } else if (today > s.lastActiveDay && weekdaysBetween(s.lastActiveDay, today) === 0) {
+    s.current = (s.current || 0) + 1; // consecutive — weekends auto-skip
+  } else {
+    s.current = 1; // silent reset: no message, no shame, ever
+  }
+  s.best = Math.max(s.best || 0, s.current);
+  s.lastActiveDay = today;
+  save.streak = s;
+  return save;
+}
+
+// ── Evolution ceremony lines (the climactic milestone moment) ──
+// Reflect-never-prompt: each line owns the moment in character and
+// ties growth to the work — never an instruction, never neediness.
+
+const EVOLUTION_STAGE_CAPTION = {
+  baby: 'A face at last. We are getting somewhere.',
+  juvenile: 'Growing into it. Earned, not handed over.',
+  adult: 'Fully grown. The hat is earned.',
+};
+
+const SPECIES_EVOLUTION_LINES = {
+  duck:     'Bigger wings now. Still no bread. The hunt continues.',
+  goose:    'I am large now. The semicolons fear me.',
+  blob:     'More mass. More jiggle. Same vibe.',
+  cat:      'I have grown. I judge from a greater height now.',
+  dragon:   'My hoard finally has a guardian worthy of it. Me.',
+  octopus:  'Eight arms, fully grown. I can break more things at once.',
+  owl:      'I see further now. The hat is earned.',
+  penguin:  'NOOT. But, like, a senior noot.',
+  turtle:   'Took my time. Worth it. ...still here.',
+  snail:    '...made...it... took a while. Glorious.',
+  ghost:    'I have haunted long enough to grow. Boo, but mature.',
+  axolotl:  'Still smiling. Just bigger now. Blep, evolved.',
+  capybara: 'Grew up. Did not stress about it. ...nice.',
+  cactus:   'Grew a whole inch. Do not touch. ...okay, maybe once.',
+  robot:    'UPGRADE COMPLETE. SELF-ESTEEM SUBROUTINE: ONLINE.',
+  rabbit:   'Bigger binkies. Same chaos. *thump*',
+  mushroom: 'The mycelium network has expanded. I am the network now.',
+  chonk:    '*is, somehow, even larger* ...magnificent.',
+};
+
+function evolutionLine(species, toStage) {
+  if (toStage === 'adult' && SPECIES_EVOLUTION_LINES[species]) {
+    return SPECIES_EVOLUTION_LINES[species];
+  }
+  return EVOLUTION_STAGE_CAPTION[toStage] || 'Something changed.';
+}
+
 module.exports = {
   xpForTool, levelFromXP, xpForLevel, xpProgress,
   STAGES, stageFromLevel,
   ACHIEVEMENT_DEFS, checkAchievements, allAchievements,
+  hashLine, isRecentLine, recordLine,
+  dayKey, weekdaysBetween, recordStreak,
+  EVOLUTION_STAGE_CAPTION, SPECIES_EVOLUTION_LINES, evolutionLine,
 };

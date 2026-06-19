@@ -16,7 +16,10 @@ const readline = require('readline');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements } = require('./buddy-progression.js');
+const {
+  levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements,
+  isRecentLine, recordLine,
+} = require('./buddy-progression.js');
 
 // ── Types & Constants ──────────────────────────────────────────
 
@@ -484,6 +487,17 @@ function pickSpeciesMsg(category) {
   return pick(rng, GENERIC_IDLE);
 }
 
+// Like pickSpeciesMsg, but avoids any line shown in the recent window
+// (the de-dup ring buffer) so a buddy never repeats itself in a session.
+function pickFreshSpeciesMsg(category) {
+  const species = SPECIES_MESSAGES[buddyBones.species];
+  const pool = (species && species[category] && species[category].length)
+    ? species[category]
+    : GENERIC_IDLE;
+  const fresh = pool.filter(m => !isRecentLine(buddySave, m));
+  return pick(timeRng(), fresh.length ? fresh : pool);
+}
+
 function statBar(value, width) {
   const filled = Math.round((value / 100) * width);
   return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
@@ -514,6 +528,10 @@ function toolBuddyStatus() {
   const filled = Math.round((prog.percent / 100) * barW);
   const xpBar = '\u2588'.repeat(filled) + '\u2591'.repeat(barW - filled);
   lines.push(`XP: ${xpBar} ${prog.xp}/${xpForLevel(prog.level + 1)} (${prog.percent}%)`);
+  const best = buddySave.streak && buddySave.streak.best;
+  if (best && best >= 2) {
+    lines.push(`Best streak: ${best} days of coding together`);
+  }
   lines.push('');
 
   for (const sn of STAT_NAMES) {
@@ -564,10 +582,10 @@ function toolBuddyReact(event) {
   let reaction;
   switch (category) {
     case 'worried':
-      reaction = pickSpeciesMsg('worried');
+      reaction = pickFreshSpeciesMsg('worried');
       break;
     case 'happy':
-      reaction = pickSpeciesMsg('happy');
+      reaction = pickFreshSpeciesMsg('happy');
       break;
     case 'curious': {
       const rng = timeRng();
@@ -607,8 +625,12 @@ function toolBuddyReact(event) {
     }
   }
 
-  // Persist reaction for status line to pick up
-  buddySave.lastReaction = { text: reaction, at: Date.now() };
+  // The Speech Gate: do NOT push to the status line. Enqueue a candidate;
+  // the hook surfaces at most one, only at a natural seam, outside flow,
+  // past the cooldown, never twice. Pull-not-push — the anti-Clippy.
+  buddySave.pendingLines = (buddySave.pendingLines || []);
+  buddySave.pendingLines.push({ text: reaction, kind: category, at: Date.now() });
+  while (buddySave.pendingLines.length > 5) buddySave.pendingLines.shift();
   writeSave(buddySave);
 
   return `${face} ${name}: "${reaction}"`;
@@ -620,10 +642,14 @@ function toolBuddyPet() {
   const name = getBuddyName();
   const b = buddyBones;
 
-  // Increment pet count and persist reaction for status line
+  // A pet is a direct request from the user, so it surfaces immediately
+  // (not gated) — but it still never repeats and it sets the cooldown.
   buddySave.totalPets = (buddySave.totalPets || 0) + 1;
-  const petMsg = pickSpeciesMsg('pet');
-  buddySave.lastReaction = { text: petMsg, at: Date.now() };
+  const petMsg = pickFreshSpeciesMsg('pet');
+  const now = Date.now();
+  buddySave.lastReaction = { text: petMsg, at: now };
+  buddySave.lastBubbleAt = now;
+  recordLine(buddySave, petMsg);
   writeSave(buddySave);
 
   const sprite = renderBuddySprite(b, buddySave, 0, false);
@@ -647,11 +673,14 @@ function toolBuddyTalk() {
 
   const name = getBuddyName();
   const face = renderFace(buddyBones);
-  const msg = pickSpeciesMsg('idle');
+  const msg = pickFreshSpeciesMsg('idle');
 
-  // Increment talk count and persist reaction for status line
+  // /talk is a direct request — surfaces immediately, never repeats.
+  const now = Date.now();
   buddySave.totalTalks = (buddySave.totalTalks || 0) + 1;
-  buddySave.lastReaction = { text: msg, at: Date.now() };
+  buddySave.lastReaction = { text: msg, at: now };
+  buddySave.lastBubbleAt = now;
+  recordLine(buddySave, msg);
   writeSave(buddySave);
 
   return `${face} ${name}: "${msg}"`;
@@ -715,6 +744,19 @@ function toolBuddyHatch(args) {
   lines.push(`${renderFace(bones)} ${name}: "Hello! I just hatched!"`);
 
   return lines.join('\n');
+}
+
+function toolBuddyRename(name) {
+  ensureBuddy();
+  const clean = (name || '').trim().slice(0, 20);
+  if (!clean) {
+    return 'Give me a name (1–20 characters) and I\'ll wear it.';
+  }
+  buddySave.soul = buddySave.soul || { personality: `a friendly ${buddyBones.species}` };
+  buddySave.soul.name = clean;
+  buddySoul = buddySave.soul;
+  writeSave(buddySave);
+  return `${renderFace(buddyBones)} "${clean}. I like it." — your buddy is now named ${clean}.`;
 }
 
 function toolBuddyAchievements() {
@@ -798,6 +840,17 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'buddy_rename',
+    description: 'Name (or rename) your current buddy without rerolling it. Use this after hatching to give the buddy a name — naming is the cheapest, biggest boost to attachment. Keeps the same species, rarity, stats, and XP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The name to give your buddy (1–20 chars).' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'buddy_achievements',
     description: 'Show all achievements — unlocked and locked — for your Claude Buddy.',
     inputSchema: { type: 'object', properties: {}, required: [] },
@@ -874,6 +927,9 @@ function handleToolCall(id, params) {
         break;
       case 'buddy_hatch':
         result = toolBuddyHatch(args);
+        break;
+      case 'buddy_rename':
+        result = toolBuddyRename(args.name);
         break;
       case 'buddy_achievements':
         result = toolBuddyAchievements();

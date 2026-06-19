@@ -12,7 +12,7 @@ const path = require('path');
 const os = require('os');
 
 const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
-const { levelFromXP, xpProgress, stageFromLevel } = require('./buddy-progression.js');
+const { levelFromXP, xpProgress, stageFromLevel, evolutionLine } = require('./buddy-progression.js');
 const SALT = 'friend-2026-401';
 
 // ── Minimal PRNG (same as companion.ts) ─────────────────────
@@ -240,6 +240,37 @@ const RST = '\x1b[0m';
 const DIM = '\x1b[2m';
 const ITAL = '\x1b[3m';
 
+// ── Evolution Ceremony ─────────────────────────────────────────
+// The hook writes save.lastEvolution on every stage transition. For
+// ~15s after, the buddy's growth gets a moment instead of silently
+// swapping sprites — the climactic payoff the progression earns.
+const CEREMONY_TTL = 15000;
+if (save.lastEvolution && save.lastEvolution.to && Date.now() - save.lastEvolution.at < CEREMONY_TTL) {
+  const toStage = String(save.lastEvolution.to);
+  const stageLabel = toStage.toUpperCase();
+  const article = /^[AEIOU]/.test(stageLabel) ? 'an' : 'a';
+  const lore = evolutionLine(bones.species, toStage);
+  const evoSprite = renderBuddySprite(bones, save, 0, false);
+  const content = [
+    '  ✦ EVOLUTION ✦',
+    '',
+    ...evoSprite.map(l => '  ' + l),
+    '',
+    `  ${name} is now ${article} ${stageLabel}.`,
+    `  "${lore}"`,
+    '  Your work shaped this.',
+  ];
+  const innerW = Math.min(46, Math.max(12, ...content.map(l => l.length)));
+  const card = [`${rc}╭${'─'.repeat(innerW + 2)}╮${RST}`];
+  for (const l of content) {
+    const line = l.length > innerW ? l.slice(0, innerW) : l;
+    card.push(`${rc}│${RST} ${line}${' '.repeat(innerW - line.length)} ${rc}│${RST}`);
+  }
+  card.push(`${rc}╰${'─'.repeat(innerW + 2)}╯${RST}`);
+  process.stdout.write(card.join('\n'));
+  process.exit(0);
+}
+
 // ── Layout: match original CompanionSprite.tsx ──
 // Original layout: sprite column right-aligned, name centered below,
 // speech bubble to the LEFT with ─ tail when speaking.
@@ -295,7 +326,9 @@ const namePad = Math.max(0, spriteCol + Math.floor((spriteW - nameW) / 2));
 const prog = xpProgress(save.xp || 0);
 const stage = stageFromLevel(prog.level);
 const levelTag = prog.level > 0 ? ` Lv.${prog.level}` : '';
-out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${name}${levelTag}${RST}`);
+const bestStreak = (save.streak && save.streak.best) || 0;
+const streakTag = bestStreak >= 3 ? ` ·${bestStreak}d` : '';
+out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${name}${levelTag}${streakTag}${RST}`);
 
 if (save.lastLevelUp && Date.now() - save.lastLevelUp.at < 10000) {
   out.push(`\x1b[${namePad + 1}G${rc}\x1b[1m\u2B06 Level ${save.lastLevelUp.level}!${RST}`);
