@@ -7,7 +7,7 @@ const os = require('os');
 const {
   xpForTool, levelFromXP, stageFromLevel, checkAchievements,
   isRecentLine, recordLine, recordStreak,
-  dayKey, seedRawStats, accrueStats,
+  dayKey, seedRawStats, accrueStats, evolutionInfo,
 } = require('./buddy-progression.js');
 const {
   resolveContext, ensureBuddySave, safeWriteJSON,
@@ -207,7 +207,11 @@ function run(raw) {
     const newStage = stageFromLevel(newLevel);
     save.lastLevelUp = { level: newLevel, at: Date.now() };
     if (newStage !== oldStage) {
-      save.lastEvolution = { from: oldStage, to: newStage, at: Date.now() };
+      const info = evolutionInfo(save); // the form your code just earned
+      save.lastEvolution = {
+        from: oldStage, to: newStage, at: Date.now(),
+        form: info && info.form, path: info && info.path, primary: info && info.primary,
+      };
     }
   }
 

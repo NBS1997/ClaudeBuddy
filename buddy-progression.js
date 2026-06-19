@@ -46,13 +46,14 @@ function xpProgress(xp) {
   };
 }
 
-const STAGES = ['egg', 'baby', 'juvenile', 'adult'];
+const STAGES = ['egg', 'baby', 'juvenile', 'adult', 'master'];
 
 function stageFromLevel(level) {
   if (level <= 0) return 'egg';
   if (level <= 4) return 'baby';
   if (level <= 14) return 'juvenile';
-  return 'adult';
+  if (level <= 24) return 'adult';
+  return 'master';
 }
 
 const ACHIEVEMENT_DEFS = [
@@ -64,8 +65,10 @@ const ACHIEVEMENT_DEFS = [
   { id: 'test_runner',  name: 'Test Runner',     icon: '\uD83E\uDDEA', check: s => (s.testRuns || 0) >= 50 },
   { id: 'committer',    name: 'Serial Committer', icon: '\uD83D\uDCDD', check: s => (s.commits || 0) >= 25 },
   { id: 'shiny_hunter', name: 'Shiny Hunter',    icon: '\u2728',       check: s => !!s.overrides && s.overrides.shiny === true },
-  { id: 'evolved',      name: 'Final Form',      icon: '\uD83C\uDF1F', check: s => levelFromXP(s.xp || 0) >= 15 },
+  { id: 'evolved',      name: 'True Form',       icon: '\uD83C\uDF1F', check: s => levelFromXP(s.xp || 0) >= 15 },
+  { id: 'masterwork',   name: 'Masterwork',      icon: '\uD83D\uDC51', check: s => levelFromXP(s.xp || 0) >= 25 },
   { id: 'chatty',       name: 'Chatty',          icon: '\uD83D\uDCAC', check: s => (s.totalTalks || 0) >= 50 },
+  { id: 'konami',       name: 'Cheat Code',      icon: '\uD83C\uDFAE', check: s => !!s.konamiUnlocked },
 ];
 
 function checkAchievements(save) {
@@ -285,6 +288,49 @@ function displayStats(save) {
   return { stats, dominant: total > 0 ? dom.name : null, total };
 }
 
+// ── Emergent evolution paths (you don't choose — your code does) ──
+// At adult (Lv.15) the dominant stat decides Sentinel vs Muse; at master
+// (Lv.25) the secondary stat decides the final form. Earned, never picked.
+
+const SENTINEL_PRIMARIES = ['DEBUGGING', 'PATIENCE'];
+
+function pathFromPrimary(primary) {
+  if (!primary) return null;
+  return SENTINEL_PRIMARIES.includes(primary) ? 'Sentinel' : 'Muse';
+}
+
+// Where the buddy is trending — shown BEFORE the lock so it's recognized,
+// not sprung. Returns 'Sentinel' | 'Muse' | null.
+function trendingPath(save) {
+  const ds = displayStats(save);
+  return pathFromPrimary(ds.dominant);
+}
+
+// Full evolution identity once adult/master; null before then.
+function evolutionInfo(save) {
+  const level = levelFromXP(save.xp || 0);
+  const stage = stageFromLevel(level);
+  if (stage !== 'adult' && stage !== 'master') return null;
+  const ds = displayStats(save);
+  if (!ds.dominant) return { stage, path: null, form: null, primary: null, secondary: null };
+  const ranked = ds.stats.slice().sort((a, b) => b.raw - a.raw);
+  const primary = ranked[0].name;
+  const secondary = ranked[1] ? ranked[1].name : null;
+  const path = pathFromPrimary(primary);
+  let form = path;
+  if (stage === 'master') {
+    if (path === 'Sentinel') form = secondary === 'PATIENCE' ? 'Aegis' : 'Oracle';
+    else form = secondary === 'CHAOS' ? 'Spark' : 'Architect';
+  }
+  return { stage, path, form, primary, secondary };
+}
+
+function pathGlyph(path) {
+  if (path === 'Sentinel' || path === 'Aegis' || path === 'Oracle') return '⊕';
+  if (path === 'Muse' || path === 'Architect' || path === 'Spark') return '✦';
+  return '';
+}
+
 module.exports = {
   xpForTool, levelFromXP, xpForLevel, xpProgress,
   STAGES, stageFromLevel,
@@ -293,4 +339,5 @@ module.exports = {
   dayKey, weekdaysBetween, recordStreak,
   EVOLUTION_STAGE_CAPTION, SPECIES_EVOLUTION_LINES, evolutionLine,
   STAT_KEYS, STAT_MEANING, emptyStats, seedRawStats, accrueStats, displayStats,
+  trendingPath, evolutionInfo, pathGlyph,
 };

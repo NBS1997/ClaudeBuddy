@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { levelFromXP, xpProgress, stageFromLevel, evolutionLine, displayStats } = require('./buddy-progression.js');
+const { levelFromXP, xpProgress, stageFromLevel, evolutionLine, displayStats, evolutionInfo, pathGlyph } = require('./buddy-progression.js');
 const { readActiveSavePath, safeReadJSON } = require('./buddy-paths.js');
 const SALT = 'friend-2026-401';
 
@@ -238,14 +238,19 @@ if (save.lastEvolution && save.lastEvolution.to && Date.now() - save.lastEvoluti
   const article = /^[AEIOU]/.test(stageLabel) ? 'an' : 'a';
   const lore = evolutionLine(bones.species, toStage);
   const evoSprite = renderBuddySprite(bones, save, 0, false);
+  const form = save.lastEvolution.form;
+  const primary = save.lastEvolution.primary;
+  const headline = form
+    ? [`  ${name} has become ${/^[AEIOU]/.test(form.toUpperCase()) ? 'an' : 'a'} ${form.toUpperCase()}.`,
+       primary ? `  Your ${primary.toLowerCase()} shaped this.` : '  Your work shaped this.']
+    : [`  ${name} is now ${article} ${stageLabel}.`, '  Your work shaped this.'];
   const content = [
     '  ✦ EVOLUTION ✦',
     '',
     ...evoSprite.map(l => '  ' + l),
     '',
-    `  ${name} is now ${article} ${stageLabel}.`,
+    ...headline,
     `  "${lore}"`,
-    '  Your work shaped this.',
   ];
   const innerW = Math.min(46, Math.max(12, ...content.map(l => l.length)));
   const card = [`${rc}╭${'─'.repeat(innerW + 2)}╮${RST}`];
@@ -315,7 +320,9 @@ const stage = stageFromLevel(prog.level);
 const levelTag = prog.level > 0 ? ` Lv.${prog.level}` : '';
 const bestStreak = (save.streak && save.streak.best) || 0;
 const streakTag = bestStreak >= 3 ? ` ·${bestStreak}d` : '';
-out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${name}${levelTag}${streakTag}${RST}`);
+const evoInfo = evolutionInfo(save);
+const pathBadge = evoInfo && evoInfo.path ? `${pathGlyph(evoInfo.path)} ` : '';
+out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${pathBadge}${name}${levelTag}${streakTag}${RST}`);
 
 // Always-on emergent stat strip: a compact, glanceable portrait of how
 // you code (the dominant trait highlighted). Hidden until stats exist.

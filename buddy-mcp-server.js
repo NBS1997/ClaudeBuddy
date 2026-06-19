@@ -19,10 +19,11 @@ const fs = require('fs');
 const {
   levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements,
   isRecentLine, recordLine, displayStats, STAT_MEANING,
+  evolutionInfo, trendingPath,
 } = require('./buddy-progression.js');
 const {
   resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
-  writeActivePointer, updateCollection,
+  writeActivePointer, updateCollection, COLLECTION_PATH,
 } = require('./buddy-paths.js');
 const { pickVoice } = require('./buddy-voice.js');
 
@@ -402,6 +403,13 @@ function toolBuddyStatus() {
       lines.push(`${s.name.padEnd(10)} ${statBar(s.value, 10)} ${String(s.value).padStart(3)} ${s.trend}`);
     }
     if (ds.dominant) lines.push(`→ ${ds.dominant}: ${STAT_MEANING[ds.dominant]}`);
+    const info = evolutionInfo(buddySave);
+    if (info && info.form) {
+      lines.push(`Path: ${info.form}${info.path && info.form !== info.path ? ' (' + info.path + ')' : ''} — earned, not chosen.`);
+    } else {
+      const trend = trendingPath(buddySave);
+      if (trend) lines.push(`Trending toward: ${trend} (locks in at Lv.15)`);
+    }
   } else {
     lines.push('Stats: none yet — they emerge from how you code. Everything is possible.');
   }
@@ -515,6 +523,19 @@ function toolBuddyPet() {
   buddySave.totalPets = (buddySave.totalPets || 0) + 1;
   const petMsg = pickVoice(buddySave, buddyBones.species, 'pet');
   const now = Date.now();
+
+  // Konami: five quick pets in a row unlocks a one-time secret shimmer.
+  // Earned, pulled by curiosity, fires once — never a grindable lever.
+  buddySave.petStreak = (now - (buddySave.lastPetAt || 0) < 15000) ? (buddySave.petStreak || 0) + 1 : 1;
+  buddySave.lastPetAt = now;
+  let konamiMsg = '';
+  if (buddySave.petStreak >= 5 && !buddySave.konamiUnlocked) {
+    buddySave.konamiUnlocked = true;
+    buddySave.overrides = Object.assign({}, buddySave.overrides, { shiny: true });
+    b.shiny = true;
+    konamiMsg = '\n✨ ...the buddy shimmers. you found the cheat code. (shiny unlocked!)';
+  }
+
   buddySave.lastReaction = { text: petMsg, at: now };
   buddySave.lastBubbleAt = now;
   recordLine(buddySave, petMsg);
@@ -532,6 +553,7 @@ function toolBuddyPet() {
   }
   lines.push(`${name}: "${petMsg}"`);
   lines.push(`(Total pets: ${buddySave.totalPets})`);
+  if (konamiMsg) lines.push(konamiMsg);
 
   return lines.join('\n');
 }
@@ -623,6 +645,62 @@ function toolBuddyRename(name) {
   buddySoul = buddySave.soul;
   writeSave(buddySave);
   return `${renderFace(buddyBones)} "${clean}. I like it." — your buddy is now named ${clean}.`;
+}
+
+function cardEpitaph(save, ds, info) {
+  if (info && info.form && info.form !== info.path) return `A ${info.form}. Earned, not chosen.`;
+  if (info && info.path) return `A ${info.path}. The code decided.`;
+  if (ds.dominant) return STAT_MEANING[ds.dominant];
+  return 'Everything is still possible.';
+}
+
+// A clipboard-safe card (NO cursor-jump escape codes) built to be screenshotted
+// or pasted into Slack/Discord without corrupting.
+function toolBuddyCard() {
+  ensureBuddy();
+  const name = getBuddyName();
+  const b = buddyBones;
+  const prog = xpProgress(buddySave.xp || 0);
+  const info = evolutionInfo(buddySave);
+  const ds = displayStats(buddySave);
+  const stars = RARITY_STARS[b.rarity];
+  const shiny = b.shiny ? ' ✨' : '';
+  const formLabel = info && info.form ? info.form + ' ' : '';
+  const sprite = renderBuddySprite(b, buddySave, 0, false);
+
+  const inner = 32;
+  const pad = s => { s = s.length > inner ? s.slice(0, inner) : s; return s + ' '.repeat(inner - s.length); };
+  const lines = [];
+  lines.push('╭' + '─'.repeat(inner + 2) + '╮');
+  lines.push('│ ' + pad(`${name}  Lv.${prog.level}${shiny}`) + ' │');
+  lines.push('│ ' + pad(`${stars} ${b.rarity} ${formLabel}${b.species}`) + ' │');
+  lines.push('│ ' + pad('') + ' │');
+  for (const sl of sprite) lines.push('│ ' + pad('   ' + sl) + ' │');
+  lines.push('│ ' + pad('') + ' │');
+  if (ds.dominant) lines.push('│ ' + pad(`top trait: ${ds.dominant}`) + ' │');
+  lines.push('│ ' + pad(`"${cardEpitaph(buddySave, ds, info)}"`) + ' │');
+  lines.push('╰' + '─'.repeat(inner + 2) + '╯');
+  return lines.join('\n');
+}
+
+// All your repo buddies — a showcase, never a leaderboard.
+function toolBuddyCollection() {
+  const col = safeReadJSON(COLLECTION_PATH);
+  const buddies = (col && col.buddies) ? Object.values(col.buddies) : [];
+  if (!buddies.length) {
+    return 'No repo buddies yet. Code in a git repo and one hatches on your first edit there.';
+  }
+  buddies.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)); // recency, never ranked by XP
+  const lines = ["=== Your Buddies (a developer's autobiography) ===", ''];
+  for (const bu of buddies) {
+    const lvl = levelFromXP(bu.xp || 0);
+    const repoName = path.basename(bu.repo || '');
+    const nm = bu.name || '(unnamed)';
+    lines.push(`  ${nm.padEnd(14)} Lv.${String(lvl).padEnd(3)} ${repoName}`);
+  }
+  lines.push('');
+  lines.push(`${buddies.length} ${buddies.length === 1 ? 'buddy' : 'buddies'} · no rankings, only your own story.`);
+  return lines.join('\n');
 }
 
 function toolBuddyAchievements() {
@@ -717,6 +795,16 @@ const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'buddy_card',
+    description: 'Show a clipboard-safe Buddy Card — a compact, paste-friendly snapshot (sprite, name, level, species, rarity, evolution form, top trait) made to be screenshotted or shared.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'buddy_collection',
+    description: 'Show all of your buddies across repos — a non-competitive showcase (no rankings), ordered by recency. Your developer autobiography.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'buddy_achievements',
     description: 'Show all achievements — unlocked and locked — for your Claude Buddy.',
     inputSchema: { type: 'object', properties: {}, required: [] },
@@ -796,6 +884,12 @@ function handleToolCall(id, params) {
         break;
       case 'buddy_rename':
         result = toolBuddyRename(args.name);
+        break;
+      case 'buddy_card':
+        result = toolBuddyCard();
+        break;
+      case 'buddy_collection':
+        result = toolBuddyCollection();
         break;
       case 'buddy_achievements':
         result = toolBuddyAchievements();
