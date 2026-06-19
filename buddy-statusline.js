@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const { levelFromXP, xpProgress, stageFromLevel, evolutionLine } = require('./buddy-progression.js');
+const { levelFromXP, xpProgress, stageFromLevel, evolutionLine, displayStats } = require('./buddy-progression.js');
 const { readActiveSavePath, safeReadJSON } = require('./buddy-paths.js');
 const SALT = 'friend-2026-401';
 
@@ -329,6 +329,23 @@ const levelTag = prog.level > 0 ? ` Lv.${prog.level}` : '';
 const bestStreak = (save.streak && save.streak.best) || 0;
 const streakTag = bestStreak >= 3 ? ` ·${bestStreak}d` : '';
 out.push(`\x1b[${namePad + 1}G${DIM}${ITAL}${rc}${name}${levelTag}${streakTag}${RST}`);
+
+// Always-on emergent stat strip: a compact, glanceable portrait of how
+// you code (the dominant trait highlighted). Hidden until stats exist.
+const ds = displayStats(save);
+if (ds.total > 0) {
+  const ABBR = { DEBUGGING: 'DBG', PATIENCE: 'PAT', CHAOS: 'CHA', WISDOM: 'WIS', SNARK: 'SNK' };
+  const cells = 4;
+  const plainLen = ds.stats.length * (3 + cells) + (ds.stats.length - 1);
+  const stripCol = Math.max(1, cols - plainLen);
+  const parts = ds.stats.map(s => {
+    const filled = Math.max(0, Math.min(cells, Math.round((s.value / 100) * cells)));
+    const bar = '▰'.repeat(filled) + '▱'.repeat(cells - filled);
+    const tint = s.name === ds.dominant ? rc : DIM;
+    return `${tint}${ABBR[s.name]}${bar}${RST}`;
+  });
+  out.push(`\x1b[${stripCol}G${parts.join(' ')}`);
+}
 
 if (save.lastLevelUp && Date.now() - save.lastLevelUp.at < 10000) {
   out.push(`\x1b[${namePad + 1}G${rc}\x1b[1m\u2B06 Level ${save.lastLevelUp.level}!${RST}`);

@@ -7,6 +7,7 @@ const os = require('os');
 const {
   xpForTool, levelFromXP, stageFromLevel, checkAchievements,
   isRecentLine, recordLine, recordStreak,
+  dayKey, seedRawStats, accrueStats,
 } = require('./buddy-progression.js');
 const {
   resolveContext, ensureBuddySave, safeWriteJSON,
@@ -97,6 +98,15 @@ function run(raw) {
 
   // ── Lossless coding streak (weekends auto-skip; no shame) ────
   recordStreak(save, date);
+
+  // ── Emergent stats — accumulate a portrait of how you code ───
+  seedRawStats(save);
+  const today = dayKey(date);
+  if (!save.statSnap || save.statSnap.day !== today) {
+    save.statSnap = { day: today, raw: Object.assign({}, save.rawStats) };
+  }
+  const rapidEdit = /^(Edit|Write|MultiEdit)$/.test(toolName) && (now - prevToolAt) < 30000 && prevToolAt > 0;
+  accrueStats(save, { toolName, cmd, toolInput, hour, rapid: rapidEdit });
 
   // ── Tool-event stream (drives seam + flow detection) ─────────
   save.recentTools = (save.recentTools || []);

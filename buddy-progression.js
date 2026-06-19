@@ -193,6 +193,98 @@ function evolutionLine(species, toStage) {
   return EVOLUTION_STAGE_CAPTION[toStage] || 'Something changed.';
 }
 
+// ── Emergent stats — a portrait of how you code ────────────────
+// Stats are NOT rolled. They accumulate from real behavior, are
+// READ-ONLY, and are shown relative to each other so the buddy
+// becomes a mirror of how you work. Quality-weighted, hard to fake.
+
+const STAT_KEYS = ['DEBUGGING', 'PATIENCE', 'CHAOS', 'WISDOM', 'SNARK'];
+
+const STAT_MEANING = {
+  DEBUGGING: 'You find and fix problems.',
+  PATIENCE:  'You understand before you act.',
+  CHAOS:     'You move fast and break things.',
+  WISDOM:    'You simplify and learn.',
+  SNARK:     "You've seen some things.",
+};
+
+function emptyStats() {
+  return { DEBUGGING: 0, PATIENCE: 0, CHAOS: 0, WISDOM: 0, SNARK: 0 };
+}
+
+// First time we look, seed from the only history we kept — honest, not invented.
+function seedRawStats(save) {
+  if (save.rawStats) return save;
+  const r = emptyStats();
+  r.DEBUGGING = (save.testRuns || 0) + (save.commits || 0) * 2 + (save.bugFixes || 0) * 3;
+  if (save.nightOwl) r.SNARK += 3;
+  save.rawStats = r;
+  return save;
+}
+
+// Accumulate raw points from one tool event. ev: {toolName, cmd, toolInput, hour, rapid}.
+function accrueStats(save, ev) {
+  save.rawStats = save.rawStats || emptyStats();
+  const r = save.rawStats;
+  const t = ev.toolName || '';
+  const cmd = ev.cmd || '';
+  const ti = (ev.toolInput && typeof ev.toolInput === 'object') ? ev.toolInput : {};
+
+  // PATIENCE — understand before acting
+  if (/^(Read|Grep|Glob)$/.test(t)) r.PATIENCE += 1;
+
+  // WISDOM — simplify & learn
+  if (t === 'Read') {
+    const fp = ti.file_path || ti.path || '';
+    if (/\.(md|mdx|rst|txt|adoc)$/i.test(fp)) r.WISDOM += 1;
+  }
+  if (/^(Edit|MultiEdit)$/.test(t)) {
+    const oldL = (ti.old_string || '').length;
+    const newL = (ti.new_string || '').length;
+    if (oldL > 0 && newL < oldL) r.WISDOM += 1; // net-negative edit = simplification
+  }
+
+  // CHAOS — move fast & break things
+  if (/^(Edit|Write|MultiEdit)$/.test(t) && ev.rapid) r.CHAOS += 1;
+
+  if (t === 'Bash') {
+    if (/\bgit push\b[^\n]*(-f\b|--force)/i.test(cmd)) r.CHAOS += 3;
+    if (/\bgit (revert|reset)\b/i.test(cmd)) { r.CHAOS += 2; r.SNARK += 1; }
+    // DEBUGGING — find & fix
+    if (/\b(jest|pytest|vitest|mocha|npm test|npm run test)\b/i.test(cmd)) r.DEBUGGING += 1;
+    if (/\bgit commit\b/i.test(cmd) && /\b(fix|bug|patch|hotfix|resolve|repair)\b/i.test(cmd)) r.DEBUGGING += 3;
+  }
+
+  // SNARK — you've seen some things
+  if (ev.hour != null && ev.hour >= 0 && ev.hour < 5) r.SNARK += 1;
+  return save;
+}
+
+// Normalize raw counters to a 0–100 display scale, relative to each
+// other (a stat's *share* of total activity), with a coarse trend.
+function displayStats(save) {
+  const raw = save.rawStats || emptyStats();
+  const total = STAT_KEYS.reduce((a, k) => a + (raw[k] || 0), 0);
+  const snap = (save.statSnap && save.statSnap.raw) || null;
+  const snapTotal = snap ? STAT_KEYS.reduce((a, k) => a + (snap[k] || 0), 0) : 0;
+
+  const stats = STAT_KEYS.map(k => {
+    const share = total > 0 ? (raw[k] || 0) / total : 0;
+    const value = Math.min(100, Math.round(share * 250));
+    let trend = '→';
+    if (snap && snapTotal > 0 && total > 0) {
+      const prev = (snap[k] || 0) / snapTotal;
+      if (share > prev + 0.02) trend = '↑';
+      else if (share < prev - 0.02) trend = '↓';
+    }
+    return { name: k, value, raw: raw[k] || 0, trend, meaning: STAT_MEANING[k] };
+  });
+
+  let dom = stats[0];
+  for (const s of stats) if (s.raw > dom.raw) dom = s;
+  return { stats, dominant: total > 0 ? dom.name : null, total };
+}
+
 module.exports = {
   xpForTool, levelFromXP, xpForLevel, xpProgress,
   STAGES, stageFromLevel,
@@ -200,4 +292,5 @@ module.exports = {
   hashLine, isRecentLine, recordLine,
   dayKey, weekdaysBetween, recordStreak,
   EVOLUTION_STAGE_CAPTION, SPECIES_EVOLUTION_LINES, evolutionLine,
+  STAT_KEYS, STAT_MEANING, emptyStats, seedRawStats, accrueStats, displayStats,
 };

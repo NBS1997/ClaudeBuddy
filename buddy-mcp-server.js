@@ -18,7 +18,7 @@ const os = require('os');
 const fs = require('fs');
 const {
   levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements,
-  isRecentLine, recordLine,
+  isRecentLine, recordLine, displayStats, STAT_MEANING,
 } = require('./buddy-progression.js');
 const {
   resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
@@ -529,8 +529,15 @@ function toolBuddyStatus() {
   }
   lines.push('');
 
-  for (const sn of STAT_NAMES) {
-    lines.push(`${sn.padEnd(10)} ${statBar(b.stats[sn], 10)}  ${b.stats[sn]}`);
+  const ds = displayStats(buddySave);
+  if (ds.total > 0) {
+    lines.push('How you code (a portrait, earned — not rolled):');
+    for (const s of ds.stats) {
+      lines.push(`${s.name.padEnd(10)} ${statBar(s.value, 10)} ${String(s.value).padStart(3)} ${s.trend}`);
+    }
+    if (ds.dominant) lines.push(`→ ${ds.dominant}: ${STAT_MEANING[ds.dominant]}`);
+  } else {
+    lines.push('Stats: none yet — they emerge from how you code. Everything is possible.');
   }
   lines.push('');
 
@@ -732,9 +739,7 @@ function toolBuddyHatch(args) {
   lines.push(`Eye: ${bones.eye}  Hat: ${bones.hat}  Shiny: ${bones.shiny ? 'Yes!' : 'No'}`);
   lines.push('');
 
-  for (const sn of STAT_NAMES) {
-    lines.push(`${sn.padEnd(10)} ${statBar(bones.stats[sn], 10)}  ${bones.stats[sn]}`);
-  }
+  lines.push('Stats start empty — they emerge from how you actually code.');
   lines.push('');
   lines.push(`${renderFace(bones)} ${name}: "Hello! I just hatched!"`);
 
