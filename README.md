@@ -2,15 +2,16 @@
 
 A faithful recreation of the `/buddy` companion from Claude Code v2.1.96 — the terminal Tamagotchi that Anthropic shipped for April Fools 2026 and silently removed in v2.1.97.
 
-This version goes further: your buddy lives in Claude Code's status line, reacts to your work via MCP tools, earns XP from every tool use, evolves through stages, and tracks achievements.
+This version goes further: your buddy lives in Claude Code's status line, reacts to your work via MCP tools, and **becomes a portrait of how you code** — emergent stats, per-repo companions, evolution paths your work chooses, and a voice that respects your flow. (See [v2 — "The Mirror"](#v2--the-mirror-implemented).)
 
 ```
     -+-              ╭──────────────────╮
-   /\  /\            │ Nice refactor!   │
-  ((·)(·))           ╰──────────────────╯─
-  (  ><  )                    
-   `----´            
-   Minerva Lv.8 🔥🔥
+   /\  /\            │ that one fought  │
+  ((·)(·))           │ back. respect.   │
+  (  ><  )           ╰──────────────────╯─
+   `----´
+   ⊕ Minerva Lv.16 ·7d
+   DBG▰▰▰▰ PAT▰▰▱▱ CHA▰▱▱▱ WIS▰▰▰▱ SNK▰▱▱▱
 ```
 
 ## What's Here
@@ -88,6 +89,40 @@ Copy the `skills/` directory into `~/.claude/skills/` for global slash commands:
 | `/buddy-review [on\|off]` | Opt-in, pull-only in-character code review |
 | `/achievements` | Show achievement progress |
 
+### 4. Meet your buddy
+
+**Restart Claude Code** after setup so the hook, status line, and MCP server load. From then on:
+
+- **Auto-hatch, per repo.** The first time you *edit or commit* in a git repo, a buddy hatches for that repo — reads and `cd` don't trigger it, so throwaway folders stay clean. Species/rarity are deterministic from the repo, so the same repo always gives the same companion. Each lives in that repo's `.buddy/companion.json` (auto-added to `.gitignore`).
+- **Outside a git repo**, a single global buddy lives at `~/.claude-buddy.json`.
+- **Choose the look** with `/hatch <species> <rarity> named <name>` — this replaces the *current* repo's buddy. Stats still emerge from how you code; you pick the look, not the personality.
+- **Manage them:** `/name` to name, `/collection` to see them all, or delete a repo's `.buddy/` folder to remove its buddy.
+
+## Upgrading from v1
+
+If you already ran the original buddy:
+
+1. **Get the new code** in the same folder your config points at — v2 adds two new modules (`buddy-paths.js`, `buddy-voice.js`) that must sit beside the others:
+   ```bash
+   cd /path/to/ClaudeBuddy && git pull
+   ```
+2. **Re-copy the skills** (v2 adds `/name`, `/card`, `/collection`, `/buddy-review`):
+   ```bash
+   cp -r skills/* ~/.claude/skills/
+   ```
+3. **Confirm the MCP server is registered** and pointed at your `buddy-mcp-server.js`:
+   ```bash
+   claude mcp list                  # should list "buddy"
+   # if it's missing:
+   claude mcp add -s user buddy -- node /path/to/ClaudeBuddy/buddy-mcp-server.js
+   ```
+   Your `~/.claude/settings.json` hook + status-line paths don't need to change.
+4. **Restart Claude Code.**
+
+**Your buddy is safe.** The first time you edit in a git repo after upgrading, your existing global buddy **migrates into that repo** (`.buddy/companion.json`) with its XP, level, and name preserved — *she finds her home*. Emergent stats seed from the history we already had (test runs, commits) and fill in as you work; the old `~/.claude-buddy.json` is kept as a backup.
+
+> **Heads-up:** v2 gives **each repo its own buddy**. Working across many projects means a new companion hatches in each on your first edit there — that's the design (`/collection` shows them all). To keep a repo buddy-free, don't edit there or delete its `.buddy/` folder.
+
 ## The 18 Species
 
 All sprites ported from the [original source](https://github.com/anthropics/claude-code) (`src/buddy/sprites.ts`):
@@ -130,6 +165,8 @@ EGG (Lv.0)     BABY (Lv.1)      JUVENILE (Lv.5)    ADULT (Lv.15)
                                                      `----´
 ```
 
+At **Master (Lv.25)** the buddy reaches its final form. Adult and Master forms are **earned, not chosen** — your dominant stat sets the path (Sentinel for DEBUGGING/PATIENCE, Muse for WISDOM/CHAOS/SNARK) at Lv.15, and your secondary stat sets the final form (Aegis · Oracle · Architect · Spark) at Lv.25. See [v2 — "The Mirror"](#v2--the-mirror-implemented).
+
 ### Achievements
 
 | Icon | Name | How to unlock |
@@ -149,7 +186,7 @@ EGG (Lv.0)     BABY (Lv.1)      JUVENILE (Lv.5)    ADULT (Lv.15)
 
 ## MCP Tools
 
-The MCP server exposes 6 tools that Claude can call during conversations:
+The MCP server exposes these tools that Claude can call during conversations:
 
 | Tool | Description |
 |---|---|
@@ -175,7 +212,7 @@ Hatch with full control or let it roll randomly:
 /hatch axolotl epic crown           → axolotl, epic rarity, crown hat
 ```
 
-Any trait not specified rolls randomly. Stats always emerge from your coding behavior (v2 roadmap).
+Any trait not specified rolls randomly. `/hatch` replaces the current repo's buddy; stats always emerge from your coding behavior — you pick the look, not the personality.
 
 ## Status Line
 
@@ -189,7 +226,7 @@ A buddy that interrupts your flow gets uninstalled. So `buddy_react` never pushe
 
 ### Evolution Ceremony
 
-When your buddy crosses an evolution threshold (egg → baby → juvenile → adult), the status line shows a brief bordered reveal — the new sprite, your buddy's name, a dry in-character line, and a nod to the work that earned it. It fades after ~15 seconds.
+When your buddy crosses an evolution threshold (egg → baby → juvenile → adult → master), the status line shows a brief bordered reveal — the new sprite, your buddy's name, a dry in-character line, and a nod to the work that earned it. It fades after ~15 seconds.
 
 ### Streak
 
@@ -208,8 +245,8 @@ A calm `·Nd` tag shows your **best** coding streak — a high-water mark that o
 │  PostToolUse              reads/writes      │
 │       │                        │            │
 │  ┌──────────┐          ┌──────────────┐     │
-│  │buddy-hook│─────────→│.claude-buddy │     │
-│  │  (XP)    │  writes  │    .json     │     │
+│  │buddy-hook│─────────→│  .buddy/     │     │
+│  │ XP+stats │  writes  │companion.json│     │
 │  └──────────┘          └──────────────┘     │
 │                                │            │
 │                           reads│            │
@@ -225,23 +262,27 @@ A calm `·Nd` tag shows your **best** coding streak — a high-water mark that o
 └─────────────────────────────────────────────┘
 ```
 
-## Save File
+## Storage
 
-State persists at `~/.claude-buddy.json`. Both the standalone app and MCP server read/write from the same file:
+In a git repo, state lives at `<repo>/.buddy/companion.json` (auto-added to `.gitignore`). Outside a repo it falls back to the global `~/.claude-buddy.json`. Two small index files sit in your home dir: `~/.claude-buddy-collection.json` (powers `/collection`) and `~/.claude-buddy-active.json` (a fallback pointer for the status line).
 
 ```json
 {
-  "seed": "buddy-...",
+  "seed": "repo:github.com/you/app:you",
   "soul": { "name": "Minerva", "personality": "a wise owl" },
-  "xp": 7922,
+  "xp": 45210,
   "overrides": { "rarity": "rare" },
-  "achievements": ["first_hatch", "first_pet", "shiny_hunter"],
-  "totalPets": 42,
-  "testRuns": 31,
-  "commits": 8,
-  "lastReaction": { "text": "*watches intently*", "at": 1234567890 }
+  "rawStats": { "DEBUGGING": 342, "PATIENCE": 518, "CHAOS": 127, "WISDOM": 445, "SNARK": 88 },
+  "streak": { "current": 7, "best": 12, "lastActiveDay": "2026-06-19" },
+  "mood": "flow",
+  "lastFile": "auth.ts",
+  "achievements": ["first_hatch", "evolved", "masterwork"],
+  "recentLines": ["..."],
+  "lastReaction": { "text": "that one fought back. respect.", "at": 1234567890 }
 }
 ```
+
+The seed is deterministic from the repo's git remote (or path) + your username, so species and rarity are stable per repo — everything else (stats, streak, evolution, mood) emerges from your work.
 
 ## v2 — "The Mirror" (implemented)
 
