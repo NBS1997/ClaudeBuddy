@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const FILES = ['buddy-mcp-server.js', 'buddy-statusline.js', 'buddy-progression.js'];
+const FILES = ['buddy-voice.js', 'buddy-mcp-server.js', 'buddy-statusline.js', 'buddy-progression.js'];
 
 // Imperative second-person instructions (telling the dev what to do).
 const IMPERATIVE = [

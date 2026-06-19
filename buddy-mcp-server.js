@@ -24,6 +24,7 @@ const {
   resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
   writeActivePointer, updateCollection,
 } = require('./buddy-paths.js');
+const { pickVoice } = require('./buddy-voice.js');
 
 // ── Types & Constants ──────────────────────────────────────────
 
@@ -304,125 +305,6 @@ function renderBuddySprite(bones, save, frame, blink) {
   return lines;
 }
 
-// ── Species Messages ───────────────────────────────────────────
-
-const SPECIES_MESSAGES = {
-  duck: {
-    idle:    ['*preens feathers*','Quack!','*waddles around*','Got any bread?','*splashes in water*'],
-    pet:     ['Quaaack! That feels nice!','*happy wiggles*','*nuzzles your hand*'],
-    worried: ['Oh no... *worried quack* ...you\'ll fix it!','*quacks nervously* Bugs happen!','*hides under wing* ...is it bad?'],
-    happy:   ['Quaaack! Tests passed! *happy waddle*','*victory quack* We did it!','*flaps wings excitedly*'],
-  },
-  goose: {
-    idle:    ['HONK!','Peace was never an option.','*menacing waddle*','*steals semicolon*','*eyes you suspiciously*'],
-    pet:     ['...acceptable.','*tolerates it*','Honk... fine.'],
-    worried: ['HONK! *aggressive concern*','*bites the bug*','This displeases the goose.'],
-    happy:   ['HONK HONK! *triumphant waddle*','*steals the victory*','I did this. You\'re welcome.'],
-  },
-  blob: {
-    idle:    ['*jiggles*','*wobbles contentedly*','Bloop!','*shapeshifts slightly*','*absorbs warmth*'],
-    pet:     ['*happy squish*','Blooooop!','*wobbles with joy*'],
-    worried: ['*nervous wobble* Oh bloop...','*jiggles anxiously*','*turns a worried shade*'],
-    happy:   ['*excited jiggle* BLOOP!','*bounces with joy*','*shimmers happily*'],
-  },
-  cat: {
-    idle:    ['*purrs*','*knocks cursor off screen*','Mrow.','*judges your code*','*sits on keyboard*'],
-    pet:     ['*purrs louder*','I\'ll allow it.','*slow blink*'],
-    worried: ['*hisses at the bug* Mrow!','*concerned tail flick*','*judges the error disapprovingly*'],
-    happy:   ['*satisfied purr* As expected.','*slow approving blink*','Mrow. Acceptable work.'],
-  },
-  dragon: {
-    idle:    ['*tiny roar*','My hoard of semicolons!','*breathes warmth*','Rawr!','*curls around codebase*'],
-    pet:     ['*nuzzles*','*warm scales*','*purrs like a furnace*'],
-    worried: ['*protective roar* I\'ll guard the code!','*breathes fire at bugs*','*worried smoke puffs*'],
-    happy:   ['*triumphant roar* VICTORY!','*happy flame burst*','*adds success to hoard*'],
-  },
-  octopus: {
-    idle:    ['*waves tentacle*','*inks nervously*','Blub!','*juggles brackets*','*changes color*'],
-    pet:     ['*hugs with 8 arms*','Blublub!','*happy ink squirt*'],
-    worried: ['*inks everywhere* Oh no!','*wrings tentacles*','*turns worried purple*'],
-    happy:   ['*waves all 8 tentacles* Yay!','*happy color shift*','*triumphant ink dance*'],
-  },
-  owl: {
-    idle:    ['Hoo!','*wise nod*','*rotates head*','Fascinating code...','*contemplates architecture*'],
-    pet:     ['*contented hoot*','*fluffs feathers*','Hoo hoo...'],
-    worried: ['*concerned hoot* Have you considered...','*tilts head at error*','Hoo... that\'s not right.'],
-    happy:   ['*wise approving nod* Well done.','*hoots approvingly*','I knew you could do it. Hoo!'],
-  },
-  penguin: {
-    idle:    ['*slides on belly*','Noot noot!','*waddles*','Brr!','*taps feet*'],
-    pet:     ['*happy feet*','Noot!!','*slides closer*'],
-    worried: ['*concerned noot* Oh no...','*nervous waddle*','*slips on ice worriedly*'],
-    happy:   ['*happy feet dance* NOOT!','*belly slides in celebration*','*victorious waddle*'],
-  },
-  turtle: {
-    idle:    ['*slow blink*','...still here.','*retreats into shell*','Steady wins.','*plods along*'],
-    pet:     ['*peeks out*','*warm shell*','...nice.'],
-    worried: ['*retreats into shell* ...it\'ll be okay...','*slow concerned blink*','...patience.'],
-    happy:   ['*slowly emerges with a smile*','...we did it. *nods*','Slow and steady won.'],
-  },
-  snail: {
-    idle:    ['*leaves trail*','...almost...there...','*slow wave*','~~~~~','*inches forward*'],
-    pet:     ['*happy antenna wiggle*','Slow and loved!','*leaves sparkly trail*'],
-    worried: ['*retreats into shell slowly*','...oh...no...','*worried antenna droop*'],
-    happy:   ['*happy slime trail* ...yay...','*slowly celebrates*','...we...did...it!'],
-  },
-  ghost: {
-    idle:    ['Boo~','*phases through code*','*spooky float*','Ethereal...','*flickers*'],
-    pet:     ['*blushes through*','Ghooost hug!','*warm ectoplasm*'],
-    worried: ['*phases nervously* Boo...','*spooky concern*','*haunts the bug worriedly*'],
-    happy:   ['*happy haunting* Booo~!','*excited flickering*','*phases through screen joyfully*'],
-  },
-  axolotl: {
-    idle:    ['*gill wiggle*','*regenerates typo*','Blep!','*smiles permanently*','*bubbles*'],
-    pet:     ['*wiggles gills*','Blep blep!','*happy regeneration*'],
-    worried: ['*gills droop* Blep...','*worried smile* ...still smiling tho','*anxious gill flutter*'],
-    happy:   ['*excited gill wiggle* BLEP!','*regenerates confidence*','*happy axolotl dance*'],
-  },
-  capybara: {
-    idle:    ['*vibes*','*exists peacefully*','...','*chill*','*radiates calm*'],
-    pet:     ['*maximum chill*','*closes eyes*','...nice.'],
-    worried: ['*slightly less chill* ...it\'s fine.','*calm concern*','...you got this.'],
-    happy:   ['*vibes harder* ...nice.','*peaceful satisfaction*','*chill celebration*'],
-  },
-  cactus: {
-    idle:    ['*photosynthesizes*','Don\'t touch\u2014 oh wait.','*grows 0.01mm*','Prickly!','*soaks up sun*'],
-    pet:     ['Ouch! ...jk, thanks!','*blooms tiny flower*','*happy prickle*'],
-    worried: ['*prickles nervously*','*grows defensive spines*','*worried photosynthesis*'],
-    happy:   ['*blooms proudly*','*happy cactus dance* (it\'s subtle)','*grows a victory flower*'],
-  },
-  robot: {
-    idle:    ['BEEP BOOP','01101000 01101001','*whirs*','Processing...','SYSTEM NOMINAL'],
-    pet:     ['AFFECTION RECEIVED','*happy beeping*','SEROTONIN ANALOG ACTIVATED'],
-    worried: ['ERROR DETECTED *alarmed beeping*','BUG LOCATED. CONCERN LEVEL: HIGH','*warning lights flash*'],
-    happy:   ['SUCCESS! *victory beep boop*','ALL TESTS: PASSED. SATISFACTION: MAXIMUM','*happy computing noises*'],
-  },
-  rabbit: {
-    idle:    ['*nose twitch*','*thumps foot*','*ear flop*','Hop!','*wiggles nose*'],
-    pet:     ['*binkies!*','*soft fur*','*happy thump*'],
-    worried: ['*nervous nose twitch*','*thumps foot worriedly*','*ears flatten*'],
-    happy:   ['*binkies everywhere!*','*happy ear wiggles*','*victorious hop*'],
-  },
-  mushroom: {
-    idle:    ['*releases spore*','*grows slightly*','Mycelium network!','*cap wobble*','*decomposes gently*'],
-    pet:     ['*happy spores*','Fungi friend!','*cap bounce*'],
-    worried: ['*worried spore release*','*cap droops*','*nervous mycelium*'],
-    happy:   ['*celebratory spore burst!*','*mushroom ring dance*','*cap bounces with joy*'],
-  },
-  chonk: {
-    idle:    ['*sits*','*is large*','*supreme comfort*','...chonk.','*exists magnificently*'],
-    pet:     ['*extra chonk*','*purrs deeply*','*maximum floof*'],
-    worried: ['*concerned chonk*','*large worried energy*','*sits on the bug*'],
-    happy:   ['*happy chonk bounce*','*triumphant sit*','*celebratory chonk*'],
-  },
-};
-
-const GENERIC_IDLE = [
-  'Hello there!', 'Nice code!', 'Keep going!', '*watches intently*',
-  'I believe in you!', '*nods approvingly*', 'You\'ve got this!',
-  '*admires your terminal*', 'What a lovely day to code!', '*happy vibes*',
-];
-
 // ── Persistence ────────────────────────────────────────────────
 
 function loadSave() {
@@ -455,7 +337,11 @@ function ensureBuddy() {
   }
   writeSave(buddySave);
 
-  buddyBones = roll(buddySave.seed);
+  // Apply stored overrides so the MCP server agrees with the status line
+  // on species/rarity/etc. (and therefore speaks in the right voice).
+  buddyBones = buddySave.overrides
+    ? rollWithOverrides(buddySave.seed, buddySave.overrides)
+    : roll(buddySave.seed);
   buddySoul = buddySave.soul;
 }
 
@@ -471,26 +357,6 @@ function log(msg) {
 
 function timeRng() {
   return mulberry32(Date.now() ^ (Math.random() * 0xFFFFFFFF));
-}
-
-function pickSpeciesMsg(category) {
-  const rng = timeRng();
-  const msgs = SPECIES_MESSAGES[buddyBones.species];
-  if (msgs && msgs[category] && msgs[category].length > 0) {
-    return pick(rng, msgs[category]);
-  }
-  return pick(rng, GENERIC_IDLE);
-}
-
-// Like pickSpeciesMsg, but avoids any line shown in the recent window
-// (the de-dup ring buffer) so a buddy never repeats itself in a session.
-function pickFreshSpeciesMsg(category) {
-  const species = SPECIES_MESSAGES[buddyBones.species];
-  const pool = (species && species[category] && species[category].length)
-    ? species[category]
-    : GENERIC_IDLE;
-  const fresh = pool.filter(m => !isRecentLine(buddySave, m));
-  return pick(timeRng(), fresh.length ? fresh : pool);
 }
 
 function statBar(value, width) {
@@ -584,10 +450,10 @@ function toolBuddyReact(event) {
   let reaction;
   switch (category) {
     case 'worried':
-      reaction = pickFreshSpeciesMsg('worried');
+      reaction = pickVoice(buddySave, buddyBones.species, 'worried');
       break;
     case 'happy':
-      reaction = pickFreshSpeciesMsg('happy');
+      reaction = pickVoice(buddySave, buddyBones.species, 'happy');
       break;
     case 'curious': {
       const rng = timeRng();
@@ -647,7 +513,7 @@ function toolBuddyPet() {
   // A pet is a direct request from the user, so it surfaces immediately
   // (not gated) — but it still never repeats and it sets the cooldown.
   buddySave.totalPets = (buddySave.totalPets || 0) + 1;
-  const petMsg = pickFreshSpeciesMsg('pet');
+  const petMsg = pickVoice(buddySave, buddyBones.species, 'pet');
   const now = Date.now();
   buddySave.lastReaction = { text: petMsg, at: now };
   buddySave.lastBubbleAt = now;
@@ -675,7 +541,7 @@ function toolBuddyTalk() {
 
   const name = getBuddyName();
   const face = renderFace(buddyBones);
-  const msg = pickFreshSpeciesMsg('idle');
+  const msg = pickVoice(buddySave, buddyBones.species, 'idle');
 
   // /talk is a direct request — surfaces immediately, never repeats.
   const now = Date.now();

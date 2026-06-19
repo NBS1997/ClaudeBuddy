@@ -45,27 +45,6 @@ const HATS = ['none','crown','tophat','propeller','halo','wizard','beanie','tiny
 const STAT_NAMES = ['DEBUGGING','PATIENCE','CHAOS','WISDOM','SNARK'];
 const IDLE_SEQ = [0,0,0,0,1,0,0,0,-1,0,0,2,0,0,0];
 
-const IDLE_MSGS = {
-  duck:['*preens*','Quack!','*waddles*'],
-  goose:['HONK!','*menacing*','*steals ;*'],
-  blob:['*jiggles*','Bloop!','*wobbles*'],
-  cat:['*purrs*','Mrow.','*judges*'],
-  dragon:['*tiny roar*','Rawr!','*warm*'],
-  octopus:['*waves*','Blub!','*ink*'],
-  owl:['Hoo!','*wise nod*','*rotates*'],
-  penguin:['Noot!','*slides*','*waddles*'],
-  turtle:['*slow blink*','...here.','Steady.'],
-  snail:['*trail*','~~~~~','...almost'],
-  ghost:['Boo~','*floats*','*phases*'],
-  axolotl:['*gill wiggle*','Blep!','*smiles*'],
-  capybara:['*vibes*','*chill*','...'],
-  cactus:['*grows*','Prickly!','*sun*'],
-  robot:['BEEP','01101000','*whirs*'],
-  rabbit:['*twitch*','Hop!','*flop*'],
-  mushroom:['*spore*','*grows*','Fungi!'],
-  chonk:['*sits*','*large*','...chonk'],
-};
-
 // ── Roll (same deterministic logic) ─────────────────────────
 
 function rollRarity(rng) {
