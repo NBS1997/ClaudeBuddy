@@ -13,6 +13,7 @@ const {
   resolveContext, ensureBuddySave, safeWriteJSON,
   writeActivePointer, updateCollection,
 } = require('./buddy-paths.js');
+const { pickGenericVoice } = require('./buddy-voice.js');
 
 // Real activity = work that earns a buddy. A buddy is lazily created on
 // the first edit/commit in a repo — never on a mere read or `cd`, so
@@ -75,6 +76,10 @@ function run(raw) {
 
   const date = new Date();
   const prevToolAt = save.lastToolAt || 0;
+  const prevLastFile = save.lastFile;
+  const toolResponse = hookData.tool_response || hookData.tool_result || hookData.toolResponse || hookData.output || '';
+  let resStr = '';
+  try { resStr = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse || ''); } catch { resStr = ''; }
 
   const xpGain = xpForTool(toolName, toolInput);
   const oldXP = save.xp || 0;
@@ -125,6 +130,44 @@ function run(raw) {
     && inWindow.length >= FLOW_MIN_EVENTS
     && (now - prevToolAt) < FLOW_WINDOW_MS;
 
+  // ── Mood — drives the status line's eye expression ───────────
+  let mood = 'neutral';
+  if (seamKind === 'commit' || seamKind === 'push') mood = 'shipping';
+  else if (seamKind === 'test') mood = 'debugging';
+  else if (save.flow) mood = 'flow';
+  else {
+    const reads = inWindow.filter(e => /^(Read|Grep|Glob)$/.test(e.n)).length;
+    const edits = inWindow.filter(e => /^(Edit|Write|MultiEdit)$/.test(e.n)).length;
+    if (reads >= 3 && reads > edits * 2) mood = 'exploring';
+  }
+  save.mood = mood;
+
+  // ── Reciprocity + contextual greeting (queued; the gate decides) ──
+  save.pendingLines = save.pendingLines || [];
+  const enqueue = (text, kind) => {
+    if (!text) return;
+    save.pendingLines.push({ text, kind, at: now });
+    while (save.pendingLines.length > 6) save.pendingLines.shift();
+  };
+
+  // Solidarity on a red test; an earned ack on a fail→pass (accurate-or-silent:
+  // only when the tool output actually tells us how it went).
+  if (toolName === 'Bash' && TEST_RE.test(cmd) && resStr) {
+    const failed = /✗|✕|\b(fail|failed|failing|not ok|failures?)\b/i.test(resStr);
+    const passed = !failed && /✓|\b(pass|passed|passing|all tests|0 failures?)\b/i.test(resStr);
+    if (failed) { enqueue(pickGenericVoice(save, 'worried'), 'reciprocity'); save.lastTestFailed = true; }
+    else if (passed) {
+      if (save.lastTestFailed) { enqueue(pickGenericVoice(save, 'happy'), 'reciprocity'); if (save.rawStats) save.rawStats.DEBUGGING += 3; }
+      save.lastTestFailed = false;
+    }
+  }
+
+  // At the start of a session, one factual callback about the work — never a
+  // "days since you left me" deficit (that's the Replika trap).
+  if (sessionStart) {
+    enqueue(prevLastFile ? `back in ${prevLastFile}?` : pickGenericVoice(save, 'idle'), 'greeting');
+  }
+
   // ── The Speech Gate: promote a queued reaction only at a seam ──
   // Pull-not-push: buddy_react enqueues a candidate; here — and only
   // outside flow, past the cooldown, at a seam — does one surface.
@@ -166,6 +209,18 @@ function run(raw) {
     if (newStage !== oldStage) {
       save.lastEvolution = { from: oldStage, to: newStage, at: Date.now() };
     }
+  }
+
+  // ── Factual memory: where we were, what shipped ─────────────
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(toolName)) {
+    const fp = (toolInput && typeof toolInput === 'object' && (toolInput.file_path || toolInput.path)) || '';
+    if (fp) save.lastFile = path.basename(fp);
+  }
+  if (seamKind === 'commit') {
+    save.recentEvents = save.recentEvents || [];
+    const m = cmd.match(/git commit[^"']*["']([^"']+)["']/);
+    save.recentEvents.push({ type: 'commit', detail: (m ? m[1] : 'a commit').slice(0, 48), at: now });
+    while (save.recentEvents.length > 20) save.recentEvents.shift();
   }
 
   safeWriteJSON(ctx.savePath, save);

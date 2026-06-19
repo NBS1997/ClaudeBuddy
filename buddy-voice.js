@@ -1249,4 +1249,15 @@ function pickVoice(save, species, category) {
   return use[Math.floor(Math.random() * use.length)];
 }
 
-module.exports = { CORPUS, FLAVOR, GENERIC, dominantStat, voicePool, pickVoice };
+// Species-agnostic pick (still stat-modulated) for callers that don't roll
+// the sprite — e.g. the hook's reciprocity/greeting beats. De-dup aware.
+function pickGenericVoice(save, category) {
+  const dom = dominantStat(save);
+  const flavor = (dom && FLAVOR[dom] && FLAVOR[dom][category]) || [];
+  const pool = (GENERIC[category] || GENERIC.idle).concat(flavor);
+  const fresh = pool.filter(m => !isRecentLine(save, m));
+  const use = fresh.length ? fresh : pool;
+  return use[Math.floor(Math.random() * use.length)];
+}
+
+module.exports = { CORPUS, FLAVOR, GENERIC, dominantStat, voicePool, pickVoice, pickGenericVoice };

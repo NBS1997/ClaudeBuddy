@@ -195,6 +195,14 @@ let frame, blink = false;
 if (step === -1) { frame = 0; blink = true; }
 else { frame = step % BODIES[bones.species].length; }
 
+// Mood-driven eyes — the silent half of voice. The hook sets save.mood from
+// your recent activity; "resting" is derived here from time since last tool.
+const MOOD_EYE = { flow: '◡', debugging: '◉', shipping: '✦', resting: '-' };
+let mood = save.mood || 'neutral';
+if (save.lastToolAt && Date.now() - save.lastToolAt > 300000) mood = 'resting';
+const moodEye = MOOD_EYE[mood];
+if (moodEye && !blink) bones.eye = moodEye;
+
 let sprite = renderBuddySprite(bones, save, frame, blink);
 
 // ── Speech bubble (from MCP reactions, fades after 10s like original) ──
