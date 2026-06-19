@@ -20,6 +20,10 @@ const {
   levelFromXP, xpForLevel, xpProgress, stageFromLevel, allAchievements,
   isRecentLine, recordLine,
 } = require('./buddy-progression.js');
+const {
+  resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
+  writeActivePointer, updateCollection,
+} = require('./buddy-paths.js');
 
 // ── Types & Constants ──────────────────────────────────────────
 
@@ -38,7 +42,9 @@ const HATS = ['none','crown','tophat','propeller','halo','wizard','beanie','tiny
 const STAT_NAMES = ['DEBUGGING','PATIENCE','CHAOS','WISDOM','SNARK'];
 const SALT = 'friend-2026-401';
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
+// The server is launched in the project directory; resolve its buddy once.
+const CTX = resolveContext(process.cwd());
+const SAVE_PATH = CTX.savePath;
 
 // ── PRNG & Hashing ─────────────────────────────────────────────
 
@@ -420,18 +426,15 @@ const GENERIC_IDLE = [
 // ── Persistence ────────────────────────────────────────────────
 
 function loadSave() {
-  try {
-    return JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8'));
-  } catch {
-    return null;
-  }
+  return safeReadJSON(SAVE_PATH);
 }
 
 function writeSave(data) {
-  try {
-    fs.writeFileSync(SAVE_PATH, JSON.stringify(data, null, 2));
-  } catch (err) {
-    log(`Failed to write save file: ${err.message}`);
+  if (safeWriteJSON(SAVE_PATH, data)) {
+    writeActivePointer(CTX);
+    updateCollection(CTX, data);
+  } else {
+    log('Failed to write save file');
   }
 }
 
@@ -444,21 +447,13 @@ let buddySave = null;
 function ensureBuddy() {
   if (buddyBones) return;
 
-  buddySave = loadSave();
-
+  // Resolve this repo's buddy — migrating the legacy global buddy in on
+  // first run, or hatching a fresh one from the deterministic repo seed.
+  buddySave = ensureBuddySave(CTX, { autoHatch: true });
   if (!buddySave) {
-    // Auto-create using username as seed
-    const seed = os.userInfo().username;
-    buddySave = {
-      seed,
-      soul: null,
-      hatchedAt: Date.now(),
-      totalPets: 0,
-      totalTalks: 0,
-    };
-    writeSave(buddySave);
-    log(`Created new buddy with seed: ${seed}`);
+    buddySave = { seed: CTX.seed || os.userInfo().username, soul: null, hatchedAt: Date.now(), totalPets: 0, totalTalks: 0 };
   }
+  writeSave(buddySave);
 
   buddyBones = roll(buddySave.seed);
   buddySoul = buddySave.soul;

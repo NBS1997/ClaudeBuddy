@@ -8,8 +8,19 @@ const {
   xpForTool, levelFromXP, stageFromLevel, checkAchievements,
   isRecentLine, recordLine, recordStreak,
 } = require('./buddy-progression.js');
+const {
+  resolveContext, ensureBuddySave, safeWriteJSON,
+  writeActivePointer, updateCollection,
+} = require('./buddy-paths.js');
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
+// Real activity = work that earns a buddy. A buddy is lazily created on
+// the first edit/commit in a repo — never on a mere read or `cd`, so
+// throwaway dirs don't accumulate junk buddies.
+function isRealActivity(toolName, cmd) {
+  if (/^(Edit|Write|NotebookEdit|MultiEdit)$/.test(toolName)) return true;
+  if (toolName === 'Bash' && /\bgit commit\b/i.test(cmd)) return true;
+  return false;
+}
 
 // ── Speech Gate tuning ─────────────────────────────────────────
 const COOLDOWN_MS = 120000;       // no autonomous bubble within 2 min of the last
@@ -53,11 +64,14 @@ function run(raw) {
   const toolName = hookData.tool_name || hookData.toolName || '';
   const toolInput = hookData.tool_input || hookData.input || '';
   const cmd = typeof toolInput === 'string' ? toolInput : (toolInput && toolInput.command) || '';
-
-  let save;
-  try { save = JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8')); } catch { return; }
+  const cwd = hookData.cwd || hookData.workingDirectory || process.cwd();
 
   const now = Date.now();
+  const ctx = resolveContext(cwd);
+  const save = ensureBuddySave(ctx, { autoHatch: isRealActivity(toolName, cmd), now });
+  if (!save) return; // no buddy here yet, and this isn't real activity — stay quiet
+
+
   const date = new Date();
   const prevToolAt = save.lastToolAt || 0;
 
@@ -120,6 +134,7 @@ function run(raw) {
   }
 
   save.lastToolAt = now;
+  save.repo = ctx.gitRoot || save.repo;
 
   const newAchievements = checkAchievements(save);
   if (newAchievements.length > 0) {
@@ -143,5 +158,7 @@ function run(raw) {
     }
   }
 
-  try { fs.writeFileSync(SAVE_PATH, JSON.stringify(save, null, 2)); } catch {}
+  safeWriteJSON(ctx.savePath, save);
+  writeActivePointer(ctx);
+  updateCollection(ctx, save);
 }

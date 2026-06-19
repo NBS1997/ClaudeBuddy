@@ -11,8 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SAVE_PATH = path.join(os.homedir(), '.claude-buddy.json');
 const { levelFromXP, xpProgress, stageFromLevel, evolutionLine } = require('./buddy-progression.js');
+const { readActiveSavePath, safeReadJSON } = require('./buddy-paths.js');
 const SALT = 'friend-2026-401';
 
 // ── Minimal PRNG (same as companion.ts) ─────────────────────
@@ -189,9 +189,9 @@ function renderBuddySprite(bones, save, frame, blink) {
 
 // ── Main ────────────────────────────────────────────────────
 
-let save;
-try { save = JSON.parse(fs.readFileSync(SAVE_PATH, 'utf8')); }
-catch { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
+const SAVE_PATH = readActiveSavePath();
+const save = SAVE_PATH ? safeReadJSON(SAVE_PATH) : null;
+if (!save) { /* no buddy yet */ process.stdout.write('\u2726 type "hatch me a buddy" to get started'); process.exit(0); }
 
 const bones = roll(save.seed);
 // Apply any stored overrides
