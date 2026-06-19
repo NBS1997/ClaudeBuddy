@@ -21,7 +21,9 @@ This version goes further: your buddy lives in Claude Code's status line, reacts
 | `buddy-mcp-server.js` | MCP server — integrates the buddy into Claude Code conversations |
 | `buddy-statusline.js` | Status line renderer — animated sprite at the bottom of Claude Code |
 | `buddy-hook.js` | PostToolUse hook — silently awards XP on every tool use |
-| `buddy-progression.js` | Shared module — XP math, levels, evolution stages, achievements |
+| `buddy-progression.js` | Shared module — XP, levels, stages, emergent stats, evolution paths, achievements |
+| `buddy-paths.js` | Per-repo storage resolution, migration, collection index |
+| `buddy-voice.js` | The voice corpus — 18 species + stat-modulated flavor |
 
 ## Quick Start
 
@@ -81,6 +83,9 @@ Copy the `skills/` directory into `~/.claude/skills/` for global slash commands:
 | `/talk` | Buddy says something |
 | `/hatch [options]` | Hatch a new buddy with overrides |
 | `/name <name>` | Name or rename your buddy (no reroll) |
+| `/card` | Show a clipboard-safe Buddy Card to screenshot/share |
+| `/collection` | Show all your buddies across repos (no rankings) |
+| `/buddy-review [on\|off]` | Opt-in, pull-only in-character code review |
 | `/achievements` | Show achievement progress |
 
 ## The 18 Species
@@ -137,8 +142,10 @@ EGG (Lv.0)     BABY (Lv.1)      JUVENILE (Lv.5)    ADULT (Lv.15)
 | 🧪 | Test Runner | Run 50 test commands |
 | 📝 | Serial Committer | 25 git commits |
 | ✨ | Shiny Hunter | Hatch a shiny buddy |
-| 🌟 | Final Form | Reach adult stage |
+| 🌟 | True Form | Reach adult stage (Lv.15) |
+| 👑 | Masterwork | Reach master stage (Lv.25) |
 | 💬 | Chatty | 50 buddy talks |
+| 🎮 | Cheat Code | Find the secret (pet five times fast) |
 
 ## MCP Tools
 
@@ -152,6 +159,9 @@ The MCP server exposes 6 tools that Claude can call during conversations:
 | `buddy_talk` | Random species-appropriate message |
 | `buddy_hatch` | Hatch a new buddy with species/rarity/eye/hat/name overrides |
 | `buddy_rename` | Name/rename the current buddy without rerolling it |
+| `buddy_card` | A clipboard-safe card built to screenshot and share |
+| `buddy_collection` | All your repo buddies — a non-competitive showcase |
+| `buddy_review` | Opt-in, pull-only in-character code review (off by default) |
 | `buddy_achievements` | Show all achievement progress |
 
 ## Hatching Control
@@ -233,18 +243,23 @@ State persists at `~/.claude-buddy.json`. Both the standalone app and MCP server
 }
 ```
 
-## Roadmap (v2 — "The Mirror")
+## v2 — "The Mirror" (implemented)
 
-The v2 design spec (`docs/specs/2026-04-12-buddy-v2-design.md`) reimagines the buddy as a reflection of how you code:
+The v2 vision — *the buddy becomes a portrait of how you code* — is now built, grounded in research into virtual-pet psychology and engagement science (see [`docs/specs/2026-06-19-buddy-next-level-research.md`](docs/specs/2026-06-19-buddy-next-level-research.md), with the original design at `docs/specs/2026-04-12-buddy-v2-design.md`). Every feature honors the [Buddy Bill of Rights](#buddy-bill-of-rights).
 
-- **Per-repo buddies** — each project gets its own companion, auto-hatched
-- **Emergent stats** — DEBUGGING, PATIENCE, CHAOS, WISDOM, SNARK grow from actual coding behavior, not random rolls
-- **Emergent evolution** — your dominant stat determines the evolution path (Sentinel/Muse → Aegis/Oracle/Architect/Spark). You don't choose — your code chooses.
-- **Buddy memory** — references recent events, knows your project, speaks contextually
-- **Mood system** — flow, debugging, shipping, exploring, resting — driven by current activity
-- **Opt-in bug watcher** — local heuristic scanning (free, never leaves your machine) plus an **off-by-default, opt-in** LLM review you pull on demand at a natural pause — never mid-edit, never during flow. Everything else about the buddy is 100% local; this is the one feature that would ever send code anywhere, and only with your explicit consent. See the [Buddy Bill of Rights](#buddy-bill-of-rights).
-- **Session journal** — auto-generated development diary
-- **Streaks & milestones** — lossless best-streak records (no decay, no shame, no XP multiplier on gameable counts)
+- ✓ **Per-repo buddies** — each repo gets its own companion (`.buddy/companion.json`), auto-hatched on your first edit there; the legacy global buddy migrates in, XP-preserving. `/collection` shows them all (no rankings).
+- ✓ **Emergent stats** — DEBUGGING, PATIENCE, CHAOS, WISDOM, SNARK grow from real behavior (read:edit ratio, fail→pass, net-negative edits, …), not random rolls. Always-on bars in the status line + `/buddy`.
+- ✓ **Emergent evolution** — your dominant stat decides Sentinel vs Muse at Lv.15, and the secondary decides the final form (Aegis/Oracle/Architect/Spark) at Lv.25. The trend shows *before* the lock; the ceremony announces what your code earned. You don't choose.
+- ✓ **The Speech Gate** — pull-based, seam-gated, flow-silent, never-repeating voice (the anti-Clippy).
+- ✓ **Buddy memory** — factual, accurate-or-silent callbacks ("back in auth.ts?") at session start.
+- ✓ **Mood** — flow / debugging / shipping / exploring / resting, driven by current activity, expressed through the buddy's eyes.
+- ✓ **Reciprocity** — solidarity when a test goes red, an earned ack on a hard-won fail→pass.
+- ✓ **Lossless streaks** — best/high-water-mark only; no decay, no shame, no multiplier.
+- ✓ **Opt-in bug watcher** — a local Tier-1 heuristic that only nudges the buddy's *mood*, plus an **off-by-default, opt-in, pull-only** Tier-2 review (`/buddy-review on`). The review is performed by Claude in-session, so the buddy itself never touches the network.
+- ✓ **Deepened voices** — 18 species, ~1,000 lines, each a consistent comic worldview, re-flavored by your dominant stat.
+- ✓ **Sharing** — a clipboard-safe Buddy Card (`/card`) and a one-time Konami secret (pet five times fast).
+
+*Not yet built:* an automatic `SessionEnd` development journal (`.buddy/journal.md`).
 
 ## Buddy Bill of Rights
 

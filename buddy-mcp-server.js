@@ -703,6 +703,44 @@ function toolBuddyCollection() {
   return lines.join('\n');
 }
 
+// Tier-2 bug watcher: OFF by default, opt-in, PULL-ONLY (never mid-edit).
+// The review is performed by Claude in this session — which already has your
+// code — so nothing extra leaves the machine. The buddy itself never touches
+// the network. Calling with { enable: true|false } sets the preference.
+function toolBuddyReview(args) {
+  ensureBuddy();
+  args = args || {};
+  buddySave.bugWatcher = buddySave.bugWatcher || { tier2Enabled: false };
+
+  if (args.enable === true || args.enable === false) {
+    buddySave.bugWatcher.tier2Enabled = args.enable;
+    writeSave(buddySave);
+    return args.enable
+      ? 'Buddy review is ON.\n\nIt is PULL-ONLY — it runs only when you ask, never mid-edit, never during flow. The review is performed by Claude in this session (which already sees your code); the buddy itself never touches the network and nothing extra leaves your machine. Turn it off any time with { "enable": false }.'
+      : 'Buddy review is OFF. The buddy stays 100% local.';
+  }
+
+  if (!buddySave.bugWatcher.tier2Enabled) {
+    return 'Buddy review is OFF by default — the buddy is otherwise 100% local and never sends code anywhere.\n\nTo enable it, call buddy_review with { "enable": true }. Once on, it is pull-only: it reviews the latest change only when you ask, never mid-edit, and the review is done by Claude in this session (no separate service, no extra data leaving your machine).';
+  }
+
+  // Opted in: hand Claude (the in-session reviewer) an in-character instruction.
+  const name = getBuddyName();
+  const ds = displayStats(buddySave);
+  const dbg = ds.stats.find(s => s.name === 'DEBUGGING');
+  const info = evolutionInfo(buddySave);
+  const persona = (info && info.form) || buddyBones.species;
+  const mood = buddySave.mood || 'neutral';
+  return [
+    `[buddy_review — in-character code review]`,
+    `You are ${name}, a ${persona} (DEBUGGING ${dbg ? dbg.value : 0}/100, mood: ${mood}).`,
+    `Review the most recent change in this conversation — the code you just helped write or edit.`,
+    `Look for real bugs, type errors, edge cases, and logic mistakes.`,
+    `If something is wrong: respond with ONE terse line in ${name}'s voice, naming the issue (file:line if you can). If it's clean: just say "ok".`,
+    `Reflect, never lecture. The user explicitly pulled this review.`,
+  ].join('\n');
+}
+
 function toolBuddyAchievements() {
   ensureBuddy();
   const achs = allAchievements(buddySave);
@@ -805,6 +843,17 @@ const TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'buddy_review',
+    description: 'Pull an in-character code review from your buddy of the most recent change. OFF by default and opt-in (pass {"enable": true} once to turn it on, {"enable": false} to turn it off). Pull-only — never runs mid-edit. The review is done by Claude in this session, which already has your code; the buddy never touches the network.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enable: { type: 'boolean', description: 'Set true/false to opt in or out. Omit to pull a review (only works if enabled).' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'buddy_achievements',
     description: 'Show all achievements — unlocked and locked — for your Claude Buddy.',
     inputSchema: { type: 'object', properties: {}, required: [] },
@@ -890,6 +939,9 @@ function handleToolCall(id, params) {
         break;
       case 'buddy_collection':
         result = toolBuddyCollection();
+        break;
+      case 'buddy_review':
+        result = toolBuddyReview(args);
         break;
       case 'buddy_achievements':
         result = toolBuddyAchievements();

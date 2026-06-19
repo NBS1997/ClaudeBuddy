@@ -140,6 +140,11 @@ function run(raw) {
     const edits = inWindow.filter(e => /^(Edit|Write|MultiEdit)$/.test(e.n)).length;
     if (reads >= 3 && reads > edits * 2) mood = 'exploring';
   }
+  // Tier-1 bug watcher: a LOCAL, deterministic scan of tool output. It only
+  // nudges the buddy's mood — never a bubble, never the network, never code
+  // off the machine. (Tier-2 LLM review is opt-in and pull-only; see README.)
+  const ERROR_RE = /\b(error|exception|traceback|segfault|panic|ENOENT|is not a function|fatal)\b|✗|✕/i;
+  if (resStr && mood !== 'shipping' && ERROR_RE.test(resStr)) mood = 'debugging';
   save.mood = mood;
 
   // ── Reciprocity + contextual greeting (queued; the gate decides) ──
