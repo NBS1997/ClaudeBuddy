@@ -33,6 +33,12 @@ const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const RARITY_WEIGHTS = { common: 60, uncommon: 25, rare: 10, epic: 4, legendary: 1 };
 const RARITY_STARS  = { common: '\u2605', uncommon: '\u2605\u2605', rare: '\u2605\u2605\u2605', epic: '\u2605\u2605\u2605\u2605', legendary: '\u2605\u2605\u2605\u2605\u2605' };
 const RARITY_FLOOR  = { common: 5, uncommon: 15, rare: 25, epic: 35, legendary: 50 };
+// 256-color rarity tints (same palette as the status line). Used only by
+// buddy_status, which the skill displays raw so the terminal renders the
+// color — NOT by buddy_card, which stays escape-code-free so it survives
+// copy/paste into Slack/Discord and screenshots.
+const RARITY_COLOR  = { common: '\x1b[38;5;248m', uncommon: '\x1b[38;5;78m', rare: '\x1b[38;5;69m', epic: '\x1b[38;5;135m', legendary: '\x1b[38;5;220m' };
+const ANSI_RESET = '\x1b[0m';
 
 const SPECIES = [
   'duck','goose','blob','cat','dragon','octopus','owl','penguin',
@@ -385,8 +391,9 @@ function toolBuddyStatus() {
   const lines = [];
   lines.push(`${stars} ${b.rarity.toUpperCase()}${shinyTag}  Lv.${prog.level} (${stage})`);
   lines.push('');
+  const rc = RARITY_COLOR[b.rarity] || RARITY_COLOR.common;
   const sprite = renderBuddySprite(b, buddySave, 0, false);
-  for (const sl of sprite) lines.push('    ' + sl);
+  for (const sl of sprite) lines.push('    ' + rc + sl + ANSI_RESET);
   lines.push('');
   lines.push(`~ ${name} ~`);
   lines.push(`Species: ${b.species} | Eye: ${b.eye} | Hat: ${stage === 'adult' ? b.hat : 'locked'}`);
@@ -653,9 +660,14 @@ function toolBuddyRename(name) {
   return `${renderFace(buddyBones)} "${clean}. I like it." — your buddy is now named ${clean}.`;
 }
 
+// "A"/"An" by leading vowel — matches the evolution-ceremony article logic.
+function article(word) {
+  return /^[aeiou]/i.test(String(word)) ? 'An' : 'A';
+}
+
 function cardEpitaph(save, ds, info) {
-  if (info && info.form && info.form !== info.path) return `A ${info.form}. Earned, not chosen.`;
-  if (info && info.path) return `A ${info.path}. The code decided.`;
+  if (info && info.form && info.form !== info.path) return `${article(info.form)} ${info.form}. Earned, not chosen.`;
+  if (info && info.path) return `${article(info.path)} ${info.path}. The code decided.`;
   if (ds.dominant) return STAT_MEANING[ds.dominant];
   return 'Everything is still possible.';
 }
