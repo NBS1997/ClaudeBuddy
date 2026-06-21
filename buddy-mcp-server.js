@@ -22,7 +22,7 @@ const {
   evolutionInfo, trendingPath,
 } = require('./buddy-progression.js');
 const {
-  resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON,
+  resolveContext, ensureBuddySave, safeReadJSON, safeWriteJSON, withLock,
   writeActivePointer, updateCollection, COLLECTION_PATH,
 } = require('./buddy-paths.js');
 const { pickVoice } = require('./buddy-voice.js');
@@ -324,13 +324,33 @@ function loadSave() {
   return safeReadJSON(SAVE_PATH);
 }
 
+// Full overwrite (hatch / initial migration). Locked + atomic so it can't tear
+// or interleave with a concurrent hook write. Does NOT merge — use commit() for
+// incremental tool mutations so the hook's XP/stats aren't clobbered.
 function writeSave(data) {
-  if (safeWriteJSON(SAVE_PATH, data)) {
+  let ok = false;
+  withLock(SAVE_PATH, () => { ok = safeWriteJSON(SAVE_PATH, data); });
+  if (ok) {
     writeActivePointer(CTX);
     updateCollection(CTX, data);
   } else {
     log('Failed to write save file');
   }
+}
+
+// Concurrency-safe incremental mutation: under the lock, re-read the freshest
+// on-disk save and apply this tool's delta to THAT — so XP/stat increments the
+// hook committed since we cached buddySave aren't lost — then write and refresh
+// the cache to the merged result.
+function commit(applyDelta) {
+  withLock(SAVE_PATH, () => {
+    const fresh = safeReadJSON(SAVE_PATH) || buddySave || {};
+    applyDelta(fresh);
+    if (safeWriteJSON(SAVE_PATH, fresh)) buddySave = fresh;
+    else log('Failed to write save file');
+  });
+  writeActivePointer(CTX);
+  updateCollection(CTX, buddySave);
 }
 
 // ── Buddy State ────────────────────────────────────────────────
@@ -517,10 +537,12 @@ function toolBuddyReact(event) {
   // The Speech Gate: do NOT push to the status line. Enqueue a candidate;
   // the hook surfaces at most one, only at a natural seam, outside flow,
   // past the cooldown, never twice. Pull-not-push — the anti-Clippy.
-  buddySave.pendingLines = (buddySave.pendingLines || []);
-  buddySave.pendingLines.push({ text: reaction, kind: category, at: Date.now() });
-  while (buddySave.pendingLines.length > 5) buddySave.pendingLines.shift();
-  writeSave(buddySave);
+  const at = Date.now();
+  commit(s => {
+    s.pendingLines = (s.pendingLines || []);
+    s.pendingLines.push({ text: reaction, kind: category, at });
+    while (s.pendingLines.length > 5) s.pendingLines.shift();
+  });
 
   return `${face} ${name}: "${reaction}"`;
 }
@@ -531,28 +553,27 @@ function toolBuddyPet() {
   const name = getBuddyName();
   const b = buddyBones;
 
-  // A pet is a direct request from the user, so it surfaces immediately
-  // (not gated) — but it still never repeats and it sets the cooldown.
-  buddySave.totalPets = (buddySave.totalPets || 0) + 1;
   const petMsg = pickVoice(buddySave, buddyBones.species, 'pet');
   const now = Date.now();
 
-  // Konami: five quick pets in a row unlocks a one-time secret shimmer.
-  // Earned, pulled by curiosity, fires once — never a grindable lever.
-  buddySave.petStreak = (now - (buddySave.lastPetAt || 0) < 15000) ? (buddySave.petStreak || 0) + 1 : 1;
-  buddySave.lastPetAt = now;
+  // A pet is a direct request — it surfaces immediately (not gated), never
+  // repeats, and sets the cooldown. Konami: five quick pets in a row unlock a
+  // one-time secret shimmer — earned, pulled by curiosity, fires once.
   let konamiMsg = '';
-  if (buddySave.petStreak >= 5 && !buddySave.konamiUnlocked) {
-    buddySave.konamiUnlocked = true;
-    buddySave.overrides = Object.assign({}, buddySave.overrides, { shiny: true });
-    b.shiny = true;
-    konamiMsg = '\n✨ ...the buddy shimmers. you found the cheat code. (shiny unlocked!)';
-  }
-
-  buddySave.lastReaction = { text: petMsg, at: now };
-  buddySave.lastBubbleAt = now;
-  recordLine(buddySave, petMsg);
-  writeSave(buddySave);
+  commit(s => {
+    s.totalPets = (s.totalPets || 0) + 1;
+    s.petStreak = (now - (s.lastPetAt || 0) < 15000) ? (s.petStreak || 0) + 1 : 1;
+    s.lastPetAt = now;
+    if (s.petStreak >= 5 && !s.konamiUnlocked) {
+      s.konamiUnlocked = true;
+      s.overrides = Object.assign({}, s.overrides, { shiny: true });
+      b.shiny = true;
+      konamiMsg = '\n✨ ...the buddy shimmers. you found the cheat code. (shiny unlocked!)';
+    }
+    s.lastReaction = { text: petMsg, at: now };
+    s.lastBubbleAt = now;
+    recordLine(s, petMsg);
+  });
 
   const sprite = renderBuddySprite(b, buddySave, 0, false);
 
@@ -580,11 +601,12 @@ function toolBuddyTalk() {
 
   // /talk is a direct request — surfaces immediately, never repeats.
   const now = Date.now();
-  buddySave.totalTalks = (buddySave.totalTalks || 0) + 1;
-  buddySave.lastReaction = { text: msg, at: now };
-  buddySave.lastBubbleAt = now;
-  recordLine(buddySave, msg);
-  writeSave(buddySave);
+  commit(s => {
+    s.totalTalks = (s.totalTalks || 0) + 1;
+    s.lastReaction = { text: msg, at: now };
+    s.lastBubbleAt = now;
+    recordLine(s, msg);
+  });
 
   return `${face} ${name}: "${msg}"`;
 }
@@ -653,10 +675,11 @@ function toolBuddyRename(name) {
   if (!clean) {
     return 'Give me a name (1–20 characters) and I\'ll wear it.';
   }
-  buddySave.soul = buddySave.soul || { personality: `a friendly ${buddyBones.species}` };
-  buddySave.soul.name = clean;
+  commit(s => {
+    s.soul = s.soul || { personality: `a friendly ${buddyBones.species}` };
+    s.soul.name = clean;
+  });
   buddySoul = buddySave.soul;
-  writeSave(buddySave);
   return `${renderFace(buddyBones)} "${clean}. I like it." — your buddy is now named ${clean}.`;
 }
 
@@ -728,16 +751,18 @@ function toolBuddyCollection() {
 function toolBuddyReview(args) {
   ensureBuddy();
   args = args || {};
-  buddySave.bugWatcher = buddySave.bugWatcher || { tier2Enabled: false };
 
   if (args.enable === true || args.enable === false) {
-    buddySave.bugWatcher.tier2Enabled = args.enable;
-    writeSave(buddySave);
+    commit(s => {
+      s.bugWatcher = s.bugWatcher || { tier2Enabled: false };
+      s.bugWatcher.tier2Enabled = args.enable;
+    });
     return args.enable
       ? 'Buddy review is ON.\n\nIt is PULL-ONLY — it runs only when you ask, never mid-edit, never during flow. The review is performed by Claude in this session (which already sees your code); the buddy itself never touches the network and nothing extra leaves your machine. Turn it off any time with { "enable": false }.'
       : 'Buddy review is OFF. The buddy stays 100% local.';
   }
 
+  buddySave.bugWatcher = buddySave.bugWatcher || { tier2Enabled: false };
   if (!buddySave.bugWatcher.tier2Enabled) {
     return 'Buddy review is OFF by default — the buddy is otherwise 100% local and never sends code anywhere.\n\nTo enable it, call buddy_review with { "enable": true }. Once on, it is pull-only: it reviews the latest change only when you ask, never mid-edit, and the review is done by Claude in this session (no separate service, no extra data leaving your machine).';
   }

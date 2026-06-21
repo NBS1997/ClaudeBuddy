@@ -27,6 +27,7 @@ use. All fields are optional and lazily added; readers must tolerate absence (th
   "testRuns": 4435, "commits": 717,      // bumped by Bash test/commit commands
   "bugFixes": 0, "nightOwl": true,       // bugFixes → "Bug Squasher"; nightOwl set when coding 00:00–05:00
   "konamiUnlocked": true,                // five fast pets → secret shiny
+  "subagentRuns": 0,                     // sub-agents orchestrated (SubagentStop); ≥10 → "Conductor"
   "achievements": ["first_hatch", "test_runner", "night_owl", "committer", "evolved", "masterwork"],
 
   // ── activity stream + mood (drives Speech Gate + status-line eye) ──

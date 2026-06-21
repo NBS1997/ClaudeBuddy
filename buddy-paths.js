@@ -24,20 +24,168 @@ function safeReadJSON(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
 
-function safeWriteJSON(p, obj) {
+// ── Concurrency: lockfile mutex + atomic write ─────────────────
+// The PostToolUse hook is registered `"async": true` and fires for sub-agent
+// tool calls too, so several hook processes can race on the same companion.json
+// (read-modify-write). Without a lock, last-write-wins silently drops XP/stats
+// during parallel sub-agent bursts. These helpers make the critical section
+// mutually exclusive and the on-disk file always-complete (no torn reads for the
+// read-only status line). Node stdlib only; nothing here ever throws.
+const LOCK_SUFFIX    = '.lock';
+const LOCK_RETRY_MS  = 15;     // sleep between acquire attempts
+const LOCK_MAX_TRIES = 50;     // ~750ms bounded wait, then degrade (never drop the update)
+const LOCK_STALE_MS  = 5000;   // steal a lock older than this (a crashed holder)
+const RENAME_RETRIES = 5;      // transient EPERM/EBUSY on Windows (AV/indexer handles)
+const RENAME_RETRY_MS = 10;
+let _tmpSeq = 0;
+
+// Real synchronous sleep with no event loop — survives the hook's process.exit(0),
+// which setTimeout would not. Atomics.wait on a private (never-notified) buffer
+// blocks the calling thread for the full timeout. Stdlib, no flags on Node 20.
+function sleepMs(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+  catch { /* never throw out of the lock helper */ }
+}
+
+function tmpPathFor(targetPath) {
+  _tmpSeq = (_tmpSeq + 1) & 0xffff;
+  // Same directory as target ⇒ same volume ⇒ atomic rename. pid avoids
+  // cross-process collisions; the seq avoids same-process same-ms collisions.
+  return `${targetPath}.${process.pid}.${_tmpSeq}.tmp`;
+}
+
+// Write via a temp file then atomic rename, so a concurrent reader sees either
+// the complete old or complete new file, never a half-written one. Replaces the
+// destination atomically (MoveFileExW(REPLACE_EXISTING) on Windows / rename(2)).
+function safeWriteJSONAtomic(p, obj) {
+  let json;
+  try { json = JSON.stringify(obj, null, 2); } catch { return false; }
+  const tmp = tmpPathFor(p);
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(obj, null, 2));
+    fs.writeFileSync(tmp, json);
+  } catch {
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
+    return false;
+  }
+  for (let i = 0; i < RENAME_RETRIES; i++) {
+    try { fs.renameSync(tmp, p); return true; }
+    catch (e) {
+      const code = e && e.code;
+      if ((code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') && i < RENAME_RETRIES - 1) {
+        sleepMs(RENAME_RETRY_MS);
+        continue;
+      }
+      break;
+    }
+  }
+  // Rename kept failing — write in place so we don't drop the update (not
+  // torn-read-safe, but matches the pre-locking behavior), then drop the temp.
+  let ok = false;
+  try { fs.writeFileSync(p, json); ok = true; } catch { ok = false; }
+  try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+  return ok;
+}
+
+// safeWriteJSON is now atomic everywhere it's called (collection, active pointer,
+// migration/create, MCP/CLI writeSave) for free, via the same name.
+const safeWriteJSON = safeWriteJSONAtomic;
+
+function tryAcquireLock(lockPath) {
+  try {
+    // 'wx' ⇒ O_CREAT | O_EXCL: a single atomic syscall; two racers can't both win.
+    const fd = fs.openSync(lockPath, 'wx');
+    try { fs.writeSync(fd, String(process.pid)); } catch { /* content is advisory */ }
+    fs.closeSync(fd);
     return true;
   } catch { return false; }
 }
 
-// Walk up from a directory looking for a .git entry (dir or file).
+// A crashed holder leaves an orphan lockfile; steal it once it's clearly stale so
+// we can never deadlock forever. A real hold is sub-millisecond, so 5s never false-steals.
+function maybeStealStaleLock(lockPath, now) {
+  try {
+    const st = fs.statSync(lockPath);
+    if (now - st.mtimeMs > LOCK_STALE_MS) {
+      try { fs.unlinkSync(lockPath); } catch { /* another writer beat us — fine */ }
+    }
+  } catch { /* lock vanished between attempts — fine */ }
+}
+
+// Run fn() inside a per-savePath critical section (fn may read AND write the save).
+// Never throws. If the lock can't be acquired within the budget, runs fn ANYWAY
+// (degrade to last-write-wins) rather than dropping the update.
+function withLock(savePath, fn) {
+  const lockPath = savePath + LOCK_SUFFIX;
+  let held = false;
+  try { fs.mkdirSync(path.dirname(lockPath), { recursive: true }); } catch { /* best effort */ }
+  for (let i = 0; i < LOCK_MAX_TRIES; i++) {
+    if (tryAcquireLock(lockPath)) { held = true; break; }
+    maybeStealStaleLock(lockPath, Date.now());
+    sleepMs(LOCK_RETRY_MS);
+  }
+  try { return fn(); }
+  catch { return undefined; }
+  finally {
+    // Only unlink a lock THIS call created — never one another process holds.
+    if (held) { try { fs.unlinkSync(lockPath); } catch { /* best effort */ } }
+  }
+}
+
+// Resolve a linked worktree's `.git` FILE to the MAIN repo working tree. A linked
+// worktree's `.git` is a file `gitdir: <main>/.git/worktrees/<name>`; its `commondir`
+// points back at the shared `<main>/.git`. Returns the main repo root so XP/saves
+// land on the real repo's buddy instead of a throwaway worktree buddy that's
+// discarded when the worktree is cleaned up. Returns null on ANY failure so the
+// caller degrades to the worktree dir. Never throws.
+function mainWorktreeRoot(worktreeDir, dotgitFile) {
+  try {
+    const raw = fs.readFileSync(dotgitFile, 'utf8');
+    const m = raw.match(/^\s*gitdir:\s*(.+?)\s*$/m);
+    if (!m) return null;
+    let gitdir = m[1].trim();
+    if (!path.isAbsolute(gitdir)) gitdir = path.resolve(worktreeDir, gitdir);
+    gitdir = path.normalize(gitdir); // <main>/.git/worktrees/<name>
+
+    let commonGitDir;
+    try {
+      const cd = fs.readFileSync(path.join(gitdir, 'commondir'), 'utf8').trim();
+      commonGitDir = path.isAbsolute(cd) ? cd : path.resolve(gitdir, cd);
+    } catch {
+      commonGitDir = path.resolve(gitdir, '..', '..'); // conventional layout
+    }
+    commonGitDir = path.normalize(commonGitDir);
+
+    // Trust it only if it actually looks like a real .git directory.
+    let ok = false;
+    try {
+      const s = fs.statSync(commonGitDir);
+      ok = s.isDirectory() &&
+        (fs.existsSync(path.join(commonGitDir, 'HEAD')) ||
+         fs.existsSync(path.join(commonGitDir, 'config')));
+    } catch { ok = false; }
+    if (!ok) return null;
+
+    const mainRoot = path.dirname(commonGitDir);
+    try { return fs.realpathSync(mainRoot); } catch { return mainRoot; }
+  } catch { return null; }
+}
+
+// Walk up from a directory looking for a .git entry. A normal clone has a .git
+// DIRECTORY (return it). A linked worktree has a .git FILE — resolve through to
+// the MAIN repo so its buddy gets the XP (see mainWorktreeRoot).
 function findGitRoot(startDir) {
   let dir = startDir || process.cwd();
   try { dir = fs.realpathSync(dir); } catch { /* keep raw */ }
   for (let i = 0; i < 64; i++) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const dotgit = path.join(dir, '.git');
+    let st = null;
+    try { st = fs.statSync(dotgit); } catch { st = null; }
+    if (st) {
+      if (st.isDirectory()) return dir;                          // normal clone
+      if (st.isFile()) return mainWorktreeRoot(dir, dotgit) || dir; // linked worktree
+      return dir;
+    }
     const parent = path.dirname(dir);
     if (!parent || parent === dir) break;
     dir = parent;
@@ -178,7 +326,7 @@ function ensureBuddySave(ctx, opts) {
 
 module.exports = {
   GLOBAL_PATH, COLLECTION_PATH, ACTIVE_PATH,
-  safeReadJSON, safeWriteJSON,
+  safeReadJSON, safeWriteJSON, safeWriteJSONAtomic, withLock,
   findGitRoot, readRemoteUrl, repoSeed, username,
   resolveContext, ensureBuddySave, ensureGitignore,
   updateCollection, writeActivePointer, readActiveSavePath,

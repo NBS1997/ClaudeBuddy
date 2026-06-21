@@ -74,8 +74,13 @@ See `docs/` for the full knowledge base (data model, resolution matrix, mechanic
 
 5. **Determinism vs. emergence.** The seed (`repo remote-or-path + username`) fixes species/rarity per repo
    and must never depend on time/random; *everything else* (XP, stats, streak, mood, evolution) emerges from
-   logged behavior. `companion.json` is rewritten in full on every tool use (no locking — concurrent
-   terminals in the same repo are last-write-wins). Always go through `safeReadJSON`/`safeWriteJSON`.
+   logged behavior. `companion.json` is rewritten in full on every tool use. Concurrent writers (parallel
+   sub-agent hooks — PostToolUse fires for sub-agent tool calls too — and the MCP server) are serialized by
+   a **lockfile mutex** (`withLock` in `buddy-paths.js`) around the read-modify-write, and writes are
+   **atomic** (temp-file + rename, so readers never see a torn file). The hook reads *inside* the lock; the
+   MCP server re-reads fresh inside `commit(applyDelta)` so its writes can't clobber the hook's XP. The lock
+   degrades to last-write-wins only if it can't be acquired within its budget (never drops the update, never
+   throws). Always go through `safeReadJSON`/`safeWriteJSON` (now atomic) and `withLock`.
 
 ## Conventions
 

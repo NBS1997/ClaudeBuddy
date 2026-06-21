@@ -15,6 +15,11 @@ All logic lives in `buddy-progression.js` (pure functions, no I/O). This is the 
 | Bash — `git push` | 25 |
 | Bash — other | 5 |
 | anything else | 3 (fallback) |
+| `SubagentStop` (a sub-agent finishes — credit for the *act* of delegating) | 5 |
+
+PostToolUse fires for **sub-agent** tool calls too, so a sub-agent's inner Edits/Bash/etc. already earn XP
+on the right buddy. `SubagentStop` (fired by the `Task`/Agent spawn, not a PostToolUse) adds a small flat
+bump for orchestrating — handled in `runSubagentStop`, which never auto-hatches a buddy.
 
 XP is **unmetered** — no cooldown, dedup, or diminishing returns — so it tracks tool *volume*. Long
 autonomous sessions accrue XP steadily; that is current behavior, not a bug. (If level should reflect effort
@@ -44,7 +49,7 @@ raw points per tool event; they are read-only and shown relative to each other.
 | Stat | Earned from |
 |---|---|
 | **DEBUGGING** | test runs (+1); commits whose message says fix/bug/patch/hotfix/resolve/repair (+3) |
-| **PATIENCE** | Read / Grep / Glob (+1 each) — understanding before acting |
+| **PATIENCE** | Read / Grep / Glob (+1 each); a sub-agent finishing (`SubagentStop`, +1) — understanding/marshalling before acting |
 | **CHAOS** | rapid edits (<30s apart, +1); `git push --force` (+3); `git revert`/`reset` (+2) |
 | **WISDOM** | reading docs (`.md`/`.rst`/`.txt`/…, +1); net-negative edits where new < old length (+1) — simplification |
 | **SNARK** | coding 00:00–05:00 (+1); also +1 from a revert/reset |

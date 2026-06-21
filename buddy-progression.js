@@ -69,6 +69,7 @@ const ACHIEVEMENT_DEFS = [
   { id: 'masterwork',   name: 'Masterwork',      icon: '\uD83D\uDC51', check: s => levelFromXP(s.xp || 0) >= 25 },
   { id: 'chatty',       name: 'Chatty',          icon: '\uD83D\uDCAC', check: s => (s.totalTalks || 0) >= 50 },
   { id: 'konami',       name: 'Cheat Code',      icon: '\uD83C\uDFAE', check: s => !!s.konamiUnlocked },
+  { id: 'conductor',    name: 'Conductor',       icon: '\uD83C\uDFBC', check: s => (s.subagentRuns || 0) >= 10 },
 ];
 
 function checkAchievements(save) {

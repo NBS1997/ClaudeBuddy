@@ -10,7 +10,7 @@ const {
   dayKey, seedRawStats, accrueStats, evolutionInfo,
 } = require('./buddy-progression.js');
 const {
-  resolveContext, ensureBuddySave, safeWriteJSON,
+  resolveContext, ensureBuddySave, safeWriteJSON, withLock,
   writeActivePointer, updateCollection,
 } = require('./buddy-paths.js');
 const { pickGenericVoice } = require('./buddy-voice.js');
@@ -63,6 +63,15 @@ function run(raw) {
   let hookData;
   try { hookData = JSON.parse(raw); } catch { return; }
 
+  // SubagentStop fires once when a delegated sub-agent finishes. Its inner tool
+  // calls already earned XP via PostToolUse; here we credit only the ACT of
+  // orchestrating — a different payload, so skip the per-tool logic below.
+  if (hookData.hook_event_name === 'SubagentStop') return runSubagentStop(hookData);
+
+  runToolUse(hookData);
+}
+
+function runToolUse(hookData) {
   const toolName = hookData.tool_name || hookData.toolName || '';
   const toolInput = hookData.tool_input || hookData.input || '';
   const cmd = typeof toolInput === 'string' ? toolInput : (toolInput && toolInput.command) || '';
@@ -70,10 +79,22 @@ function run(raw) {
 
   const now = Date.now();
   const ctx = resolveContext(cwd);
-  const save = ensureBuddySave(ctx, { autoHatch: isRealActivity(toolName, cmd), now });
-  if (!save) return; // no buddy here yet, and this isn't real activity — stay quiet
 
+  // Critical section: read the freshest on-disk save, mutate, and write — all
+  // under one lock so concurrent hooks (including parallel sub-agents firing
+  // async PostToolUse) can't clobber each other's XP/stats. (See withLock.)
+  let save;
+  withLock(ctx.savePath, () => {
+    save = ensureBuddySave(ctx, { autoHatch: isRealActivity(toolName, cmd), now });
+    if (save) applyToolUse(save, { toolName, toolInput, cmd, now, hookData, ctx });
+  });
+  if (save) { writeActivePointer(ctx); updateCollection(ctx, save); }
+}
 
+// All in-memory mutation for one tool event. Runs INSIDE the withLock critical
+// section (it ends by writing the save); the caller handles pointer/collection.
+function applyToolUse(save, env) {
+  const { toolName, toolInput, cmd, now, hookData, ctx } = env;
   const date = new Date();
   const prevToolAt = save.lastToolAt || 0;
   const prevLastFile = save.lastFile;
@@ -233,6 +254,92 @@ function run(raw) {
   }
 
   safeWriteJSON(ctx.savePath, save);
-  writeActivePointer(ctx);
-  updateCollection(ctx, save);
+}
+
+// ── Orchestration credit (SubagentStop) ────────────────────────
+// A sub-agent's INNER tool calls already earned XP via PostToolUse. This credits
+// only the ACT of delegating: a small flat XP bump (the sub-agent's real work is
+// already counted, so richer credit would double-count) plus one PATIENCE point
+// ("understand/marshal before you act"). Never auto-hatches — orchestration isn't
+// "real activity", and a worktree-isolated sub-agent could fire this in a throwaway
+// dir; we only credit a buddy that already exists.
+const SUBAGENT_XP = 5;
+
+function runSubagentStop(hookData) {
+  const cwd = hookData.cwd || hookData.workingDirectory || process.cwd();
+  const now = Date.now();
+  const ctx = resolveContext(cwd);
+
+  let save;
+  withLock(ctx.savePath, () => {
+    save = ensureBuddySave(ctx, { autoHatch: false, now });
+    if (!save) return; // no buddy for this repo yet — create nothing, stay silent
+
+    const oldXP = save.xp || 0;
+    const oldLevel = levelFromXP(oldXP);
+    save.xp = oldXP + SUBAGENT_XP;
+    const newLevel = levelFromXP(save.xp);
+
+    save.subagentRuns = (save.subagentRuns || 0) + 1;
+
+    // Orchestration reads as patience — you scope and delegate before diving in.
+    seedRawStats(save);
+    save.rawStats.PATIENCE += 1;
+
+    // Keep the tool-event stream coherent so flow/seam math stays sane.
+    save.recentTools = (save.recentTools || []);
+    save.recentTools.push({ t: now, n: 'SubagentStop' });
+    while (save.recentTools.length > RECENT_TOOLS_CAP) save.recentTools.shift();
+
+    // A finished sub-agent is a natural seam. Surface ONE already-queued line
+    // under the same gate rules as the tool path — never enqueue a new one
+    // (that would be unprompted speech, against the Bill of Rights).
+    surfaceSeamLine(save, now);
+
+    save.lastToolAt = now;
+    save.repo = ctx.gitRoot || save.repo;
+
+    const newAchievements = checkAchievements(save);
+    if (newAchievements.length > 0) {
+      save.achievements = save.achievements || [];
+      for (const a of newAchievements) save.achievements.push(a.id);
+      save.lastAchievement = { name: newAchievements[0].name, icon: newAchievements[0].icon, at: now };
+    }
+    if (newLevel > oldLevel) {
+      const oldStage = stageFromLevel(oldLevel);
+      const newStage = stageFromLevel(newLevel);
+      save.lastLevelUp = { level: newLevel, at: now };
+      if (newStage !== oldStage) {
+        const info = evolutionInfo(save);
+        save.lastEvolution = {
+          from: oldStage, to: newStage, at: now,
+          form: info && info.form, path: info && info.path, primary: info && info.primary,
+        };
+      }
+    }
+
+    safeWriteJSON(ctx.savePath, save);
+  });
+
+  if (save) { writeActivePointer(ctx); updateCollection(ctx, save); }
+}
+
+// Promote at most one already-queued line at a seam — same rules as the inline
+// tool-path gate: outside flow, past cooldown, no repeats. Surfaces only; never
+// enqueues (a seam introduces no new speech source of its own).
+function surfaceSeamLine(save, now) {
+  save.pendingLines = (save.pendingLines || []).filter(p => now - p.at < PENDING_TTL);
+  if (save.flow) return;
+  const cooldownOk = !save.lastBubbleAt || (now - save.lastBubbleAt) > COOLDOWN_MS;
+  if (!cooldownOk || !save.pendingLines.length) return;
+  let cand = null;
+  for (let i = save.pendingLines.length - 1; i >= 0; i--) {
+    if (!isRecentLine(save, save.pendingLines[i].text)) { cand = save.pendingLines[i]; break; }
+  }
+  if (cand) {
+    save.lastReaction = { text: cand.text, at: now };
+    save.lastBubbleAt = now;
+    recordLine(save, cand.text);
+  }
+  save.pendingLines = [];
 }

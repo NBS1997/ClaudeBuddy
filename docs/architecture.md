@@ -111,6 +111,8 @@ never the network.
 | `~/.claude-buddy-active.json` | "Last active repo" pointer. **Status-line last resort only** when no session cwd is available. | hook + MCP server |
 
 `safeReadJSON`/`safeWriteJSON` wrap all I/O and never throw — a missing/corrupt file reads as `null`.
+`safeWriteJSON` is **atomic** (temp-file + rename), so a concurrent reader never sees a half-written file.
+`withLock(savePath, fn)` provides a lockfile mutex so a full read-modify-write can't interleave with another.
 
 ## Dev workflows
 
@@ -121,5 +123,14 @@ never the network.
   "Commands"); set `CLAUDE_PROJECT_DIR` to choose the repo, send `initialize` then `tools/call`.
 - **Before committing voice changes:** run `node scripts/voice-lint.js` (it scans `buddy-voice.js`,
   `buddy-mcp-server.js`, `buddy-statusline.js`, `buddy-progression.js`).
-- **Concurrency caveat:** multiple terminals in the same repo do unlocked read-modify-write on one
-  `companion.json`; simultaneous bursts are last-write-wins (lost increments, never corruption).
+- **Concurrency:** concurrent writers in one repo — parallel sub-agent hooks (PostToolUse fires for
+  sub-agent tool calls too) and the MCP server — are serialized by a `withLock` lockfile mutex around the
+  read-modify-write, and writes are atomic. The hook reads inside the lock; the MCP server re-reads fresh in
+  `commit(applyDelta)` so it can't clobber the hook's XP. Falls back to last-write-wins only if the lock
+  can't be acquired in time (never corruption, never a dropped update beyond that rare degrade).
+- **Sub-agent credit:** a sub-agent's *inner* tool calls already earn XP (PostToolUse fires inside them).
+  The `Task`/Agent spawn itself fires `SubagentStop` (not PostToolUse); `buddy-hook.js` branches on
+  `hook_event_name === 'SubagentStop'` to credit the *act* of delegating (a small flat XP bump + one
+  PATIENCE point + `subagentRuns`), and never auto-hatches there.
+- **Worktrees:** a linked git worktree's `.git` is a *file*; `findGitRoot` resolves it to the **main** repo
+  so XP from `isolation: 'worktree'` sub-agents lands on the real buddy, not a throwaway worktree buddy.
